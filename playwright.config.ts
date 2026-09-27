@@ -34,9 +34,16 @@ export default defineConfig({
       NEXT_PUBLIC_MOCK_DB: "true",
       NEXT_PUBLIC_MOCK_AUTH: "true",
       // Server-only opt-in required alongside NEXT_PUBLIC_MOCK_AUTH so the mock
-      // seam can never be enabled by the public flag alone. See src/lib/mock-auth.ts.
       ALLOW_MOCK_AUTH: "true",
       GITHUB_WEBHOOK_SECRET: "e2e-webhook-secret",
+      DATABASE_URL: process.env.DATABASE_URL || "postgresql://ci:ci@localhost:5432/secureflow",
+      DATABASE_POOL_URL: process.env.DATABASE_POOL_URL || "postgresql://ci:ci@localhost:5432/secureflow",
+      GROQ_API_KEY: process.env.GROQ_API_KEY || "e2e-build-placeholder",
+      GITHUB_APP_ID: process.env.GITHUB_APP_ID || "1",
+      GITHUB_PRIVATE_KEY: process.env.GITHUB_PRIVATE_KEY || "e2e-build-placeholder",
+      GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID || "e2e-build-placeholder",
+      GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET || "e2e-build-placeholder",
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:9002",
     },
   },
 
