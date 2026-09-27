@@ -8,6 +8,10 @@ node_modules
 *.md
 !README.md
 docs/
+*.db
+*.db-journal
+.gguf
+.bin
 
 # Test / dev-only artifacts — never needed in the build context, shrinks context transfer size
 **/__tests__/
