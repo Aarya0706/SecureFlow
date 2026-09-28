@@ -17,9 +17,9 @@ test.describe("Findings dashboard", () => {
       waitUntil: "domcontentloaded",
     });
 
-    await expect(page.getByText("Security Findings")).toBeVisible();
-    await expect(page.getByText("SECRET Detected")).toBeVisible();
-    await expect(page.getByText("VULNERABILITY Detected")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Security Findings" }).first()).toBeVisible();
+    await expect(page.getByText("SECRET Detected").first()).toBeVisible();
+    await expect(page.getByText("VULNERABILITY Detected").first()).toBeVisible();
 
     await expect(page.getByText("SBOM Dependency Scan")).toBeVisible();
     await expect(page.getByText("VULNERABLE")).toBeVisible();
