@@ -189,4 +189,3 @@ describe("middleware rate limiting — the 429", () => {
     expect(limitMock).toHaveBeenCalledWith("user-456");
   });
 });
-

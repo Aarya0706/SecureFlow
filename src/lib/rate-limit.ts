@@ -59,10 +59,7 @@ export const ratelimit: RateLimiterLike = upstashConfigured()
       redis: Redis.fromEnv(),
       limiter: Ratelimit.slidingWindow(20, "60 s"),
     })
-  : new RedisApiRateLimiter(
-      { limit: 20, windowSeconds: 60, keyPrefix: "global" },
-      "fail-closed",
-    );
+  : new RedisApiRateLimiter({ limit: 20, windowSeconds: 60, keyPrefix: "global" }, "fail-closed");
 
 /**
  * Limiters memoised per (class, scope).

@@ -312,4 +312,3 @@ describe("POST /api/sbom/scan", () => {
     });
   });
 });
-

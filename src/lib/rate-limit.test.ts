@@ -590,7 +590,10 @@ describe("getApiRateLimiter & RedisApiRateLimiter", () => {
 
   it("strictly enforces rate limits and returns success:false when budget is exhausted", async () => {
     const { RedisApiRateLimiter } = await import("./rate-limit");
-    const limiter = new RedisApiRateLimiter({ limit: 2, windowSeconds: 60, keyPrefix: "test-redis-limiter" }, "fail-closed");
+    const limiter = new RedisApiRateLimiter(
+      { limit: 2, windowSeconds: 60, keyPrefix: "test-redis-limiter" },
+      "fail-closed",
+    );
 
     const r1 = await limiter.limit("client-x");
     expect(r1.success).toBe(true);
@@ -607,4 +610,3 @@ process.on("unhandledRejection", (err) => {
   if (err instanceof Error && err.message.includes("Redis timeout")) return;
   throw err;
 });
-
