@@ -43,14 +43,30 @@ vi.mock("@/lib/middleware/error-handler", () => {
   };
 });
 
-import { POST, MAX_FILES_PER_REQUEST, MAX_FILE_CONTENT_LENGTH, MAX_PATH_LENGTH } from "./route";
+import {
+  POST,
+  MAX_FILES_PER_REQUEST,
+  MAX_FILE_CONTENT_LENGTH,
+  MAX_PATH_LENGTH,
+  MAX_SCAN_REQUEST_BYTES,
+} from "./route";
 
-function post(body: unknown): Promise<Response> {
+function post(
+  body: unknown,
+  headerOverrides: Record<string, string | null> = {},
+): Promise<Response> {
+  const serialized = typeof body === "string" ? body : JSON.stringify(body);
+  const headers: Record<string, string> = { "content-type": "application/json" };
+
+  for (const [k, v] of Object.entries(headerOverrides)) {
+    if (v !== null) headers[k] = v;
+  }
+
   return POST(
     new NextRequest("http://localhost/api/cli/scan", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      headers,
+      body: serialized,
     }),
   ) as unknown as Promise<Response>;
 }
@@ -151,5 +167,60 @@ describe("POST /api/cli/scan", () => {
     expect((await post({})).status).toBe(400);
     expect((await post({ files: [] })).status).toBe(400);
     expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid non-JSON body with 400", async () => {
+    const res = await post("not-a-valid-json{{{");
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Request body is not valid JSON",
+    });
+    expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
+
+  describe("aggregate request size bounding (#1103)", () => {
+    it("rejects with 413 when Content-Length exceeds MAX_SCAN_REQUEST_BYTES", async () => {
+      const res = await post(
+        { files: [{ path: "file.ts", content: "ok" }] },
+        { "content-length": String(MAX_SCAN_REQUEST_BYTES + 1024) },
+      );
+
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({
+        error: "Request payload exceeds maximum allowed size",
+      });
+      expect(scanPullRequestMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects with 413 when streamed payload body exceeds MAX_SCAN_REQUEST_BYTES without Content-Length", async () => {
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("x".repeat(MAX_SCAN_REQUEST_BYTES + 2048)));
+          controller.close();
+        },
+      });
+
+      const req = new NextRequest("http://localhost/api/cli/scan", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: stream,
+      });
+
+      const res = (await POST(req)) as unknown as Response;
+      expect(res.status).toBe(413);
+      expect(await res.json()).toEqual({
+        error: "Request payload exceeds maximum allowed size",
+      });
+      expect(scanPullRequestMock).not.toHaveBeenCalled();
+    });
+
+    it("accepts valid request within aggregate limit", async () => {
+      const res = await post({
+        files: [{ path: "src/valid.ts", content: "console.log('hello');" }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(scanPullRequestMock).toHaveBeenCalledTimes(1);
+    });
   });
 });

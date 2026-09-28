@@ -19,10 +19,17 @@ import { z } from "zod";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
 import { withRateLimit } from "@/lib/middleware/rate-limit";
 import { scanner, type FileChange } from "@/lib/armor/scanner";
+import { readBoundedRequestBody } from "@/lib/request-body";
 
 export const MAX_FILES_PER_REQUEST = 100;
 export const MAX_FILE_CONTENT_LENGTH = 512 * 1024; // 512 KB
 export const MAX_PATH_LENGTH = 1024;
+
+/**
+ * Maximum allowed HTTP request body size (10 MB aggregate limit).
+ * Bounds in-memory body buffering for unauthenticated CLI scan requests (#1103).
+ */
+export const MAX_SCAN_REQUEST_BYTES = 10 * 1024 * 1024;
 
 /**
  * The request body, checked per entry with strict size and type boundaries.
@@ -74,9 +81,21 @@ function toSyntheticAddedPatch(content: string): string {
 }
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
+  // 1. Early Content-Length check: reject oversized requests before reading body stream
+  const contentLengthHeader = req.headers.get("content-length");
+  if (contentLengthHeader) {
+    const contentLength = parseInt(contentLengthHeader, 10);
+    if (!Number.isNaN(contentLength) && contentLength > MAX_SCAN_REQUEST_BYTES) {
+      throw new AppError("Request payload exceeds maximum allowed size", 413);
+    }
+  }
+
+  // 2. Read bounded request body text (streaming abort if > MAX_SCAN_REQUEST_BYTES)
+  const rawText = await readBoundedRequestBody(req, MAX_SCAN_REQUEST_BYTES);
+
   let body: unknown;
   try {
-    body = await req.json();
+    body = JSON.parse(rawText);
   } catch {
     throw new AppError("Request body is not valid JSON", 400);
   }
