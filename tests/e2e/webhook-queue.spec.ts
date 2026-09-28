@@ -115,6 +115,6 @@ test.describe("Webhook Queue Worker E2E Lifecycle", () => {
     expect(prResponse.status()).toBe(200);
     const csvContent = await prResponse.text();
     expect(csvContent).toContain("id,userId,action,resource,decision,metadata,timestamp");
-    expect(csvContent).toContain("mock-admin-id");
+    expect(csvContent).toContain("UPDATE_ROLE");
   });
 });
