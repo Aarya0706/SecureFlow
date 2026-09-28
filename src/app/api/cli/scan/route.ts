@@ -16,8 +16,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { auth } from "@/auth";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
-import { withRateLimit } from "@/lib/middleware/rate-limit";
+import {
+  withRateLimit,
+  TIERS,
+  buildRateLimitHeaders,
+  secondsUntilReset,
+} from "@/lib/middleware/rate-limit";
+import { checkRateLimitDetailed } from "@/lib/redis";
 import { scanner, type FileChange } from "@/lib/armor/scanner";
 import { readBoundedRequestBody } from "@/lib/request-body";
 
@@ -81,7 +88,38 @@ function toSyntheticAddedPatch(content: string): string {
 }
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
-  // 1. Early Content-Length check: reject oversized requests before reading body stream
+  // 1. Authenticated User Rate Limit Check
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (userId) {
+    const userLimit = await checkRateLimitDetailed(
+      `rate-limit:cli:scan:user:${userId}`,
+      TIERS.SCAN_USER.limit,
+      TIERS.SCAN_USER.windowSeconds,
+      {
+        fallbackStrategy: TIERS.SCAN_USER.fallbackStrategy,
+        timeoutMs: TIERS.SCAN_USER.timeoutMs,
+      },
+    );
+    if (!userLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too Many Requests",
+          message: "You have exceeded the rate limit. Please try again later.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Cache-Control": "no-store",
+            ...buildRateLimitHeaders(userLimit),
+            "Retry-After": String(secondsUntilReset(userLimit.resetAt)),
+          },
+        },
+      );
+    }
+  }
+
+  // 2. Early Content-Length check: reject oversized requests before reading body stream
   const contentLengthHeader = req.headers.get("content-length");
   if (contentLengthHeader) {
     const contentLength = parseInt(contentLengthHeader, 10);
@@ -90,7 +128,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     }
   }
 
-  // 2. Read bounded request body text (streaming abort if > MAX_SCAN_REQUEST_BYTES)
+  // 3. Read bounded request body text (streaming abort if > MAX_SCAN_REQUEST_BYTES)
   const rawText = await readBoundedRequestBody(req, MAX_SCAN_REQUEST_BYTES);
 
   let body: unknown;

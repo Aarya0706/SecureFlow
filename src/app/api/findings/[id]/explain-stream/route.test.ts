@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 
 let mockIpAllowed = true;
 let mockUserAllowed = true;
@@ -34,6 +33,13 @@ vi.mock("@/lib/middleware/rate-limit", () => ({
 
 vi.mock("@/lib/redis", () => ({
   checkRateLimit: vi.fn(async () => mockUserAllowed),
+  checkRateLimitDetailed: vi.fn(async () => ({
+    allowed: mockUserAllowed,
+    limit: 10,
+    remaining: mockUserAllowed ? 9 : 0,
+    resetAt: Date.now() + 60000,
+    degraded: false,
+  })),
   redis: null,
 }));
 
@@ -206,7 +212,22 @@ describe("GET /api/findings/[id]/explain-stream", () => {
     await GET({} as any, { params: Promise.resolve({ id: "finding-1" }) });
 
     const [{ select }] = (prisma.finding.findUnique as any).mock.calls[0];
-    const known = new Set<string>([...Object.values(Prisma.FindingScalarFieldEnum), "scanResult"]);
+    const known = new Set<string>([
+      "id",
+      "scanResultId",
+      "type",
+      "severity",
+      "fileLocation",
+      "lineStart",
+      "lineEnd",
+      "codeSnippet",
+      "explanation",
+      "remediation",
+      "promptInjectionSuspected",
+      "fingerprint",
+      "createdAt",
+      "scanResult",
+    ]);
     expect(Object.keys(select).filter((field) => !known.has(field))).toEqual([]);
   });
 

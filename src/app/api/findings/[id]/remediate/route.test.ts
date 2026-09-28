@@ -20,13 +20,38 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
+const mockCheckRateLimitDetailed = vi.hoisted(() =>
+  vi.fn(async () => ({
+    allowed: true,
+    limit: 10,
+    remaining: 9,
+    resetAt: Date.now() + 60_000,
+    degraded: false,
+  })),
+);
+
+vi.mock("@/lib/redis", () => ({
+  checkRateLimitDetailed: mockCheckRateLimitDetailed,
+  checkRateLimit: vi.fn(async () => true),
+}));
+
 vi.mock("@/ai/flows/generate-remediation-patch", () => ({
   generateRemediationPatchFlow: generatePatchMock,
 }));
 
 vi.mock("@/lib/middleware/rate-limit", () => ({
   withRateLimit: vi.fn((handler: any) => handler),
-  TIERS: { AI_STREAM: { limit: 10, windowSeconds: 60 } },
+  TIERS: {
+    AI_STREAM: { limit: 10, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+    AI_STREAM_USER: {
+      limit: 10,
+      windowSeconds: 60,
+      fallbackStrategy: "fail-closed",
+      timeoutMs: 1000,
+    },
+  },
+  buildRateLimitHeaders: vi.fn(() => ({ "X-RateLimit-Limit": "10" })),
+  secondsUntilReset: vi.fn(() => 60),
 }));
 
 vi.mock("@/lib/middleware/error-handler", () => ({
@@ -247,3 +272,28 @@ describe("POST /api/findings/[id]/remediate — happy path", () => {
     expect(body.explanation).toBe("Use parameterized queries.");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+describe("POST /api/findings/[id]/remediate — rate limiting", () => {
+  it("enforces user-based rate limiting on the authenticated user", async () => {
+    mockCheckRateLimitDetailed.mockResolvedValueOnce({
+      allowed: false,
+      limit: 10,
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      degraded: false,
+    });
+
+    const response = await POST(makeRequest("finding-1"), {
+      params: Promise.resolve({ id: "finding-1" }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(mockFindFirst).not.toHaveBeenCalled();
+    expect(generatePatchMock).not.toHaveBeenCalled();
+  });
+});
+

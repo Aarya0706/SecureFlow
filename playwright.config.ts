@@ -46,8 +46,7 @@ export default defineConfig({
       NEXT_PUBLIC_MOCK_DB: "true",
       NEXT_PUBLIC_MOCK_AUTH: "true",
       // Server-only opt-in required alongside NEXT_PUBLIC_MOCK_AUTH so the mock
-      // seam can never be enabled by the public flag alone. See src/lib/mock-auth.ts.
-      ALLOW_MOCK_AUTH: "true",
+      ALLOW_MOCK_AUTH: "true"
     },
   },
 

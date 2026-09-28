@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createHmac } from "crypto";
 
-const SECRET = "e2e-webhook-secret";
+const SECRET = process.env.GITHUB_WEBHOOK_SECRET || "e2e-webhook-secret";
 
 /**
  * Signs a webhook payload body with HMAC-SHA256 using the test secret.
@@ -108,10 +108,10 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
     await expect(page.getByRole("columnheader", { name: "Actions" }).first()).toBeVisible();
 
     // First seeded failed job — repo visible
-    await expect(page.getByText("mock-owner/mock-repo")).toBeVisible();
+    await expect(page.getByText("mock-owner/mock-repo").first()).toBeVisible();
 
     // Second seeded failed job — different repo
-    await expect(page.getByText("mock-owner/another-repo")).toBeVisible();
+    await expect(page.getByText("mock-owner/another-repo").first()).toBeVisible();
 
     // Both jobs show the `opened` and `push` action badges
     await expect(page.getByText("opened").first()).toBeVisible();

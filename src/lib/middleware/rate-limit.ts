@@ -61,6 +61,18 @@ export const TIERS = {
     fallbackStrategy: "fail-closed" as FallbackStrategy,
     timeoutMs: 1000,
   },
+  SCAN: {
+    limit: 20,
+    windowSeconds: 60,
+    fallbackStrategy: "fail-closed" as FallbackStrategy,
+    timeoutMs: 1000,
+  },
+  SCAN_USER: {
+    limit: 10,
+    windowSeconds: 60,
+    fallbackStrategy: "fail-closed" as FallbackStrategy,
+    timeoutMs: 1000,
+  },
 } as const;
 
 /** Seconds remaining until the window rolls over, floored at 1 so we never say "retry in 0s". */
