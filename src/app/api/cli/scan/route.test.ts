@@ -1,9 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 
-const { scanPullRequestMock, rateLimitConfigs } = vi.hoisted(() => ({
+const { scanPullRequestMock, rateLimitConfigs, authMock, checkRateLimitMock } = vi.hoisted(() => ({
   scanPullRequestMock: vi.fn(),
   rateLimitConfigs: [] as Array<{ keyPrefix: string; fallbackStrategy?: string }>,
+  authMock: vi.fn(async () => null),
+  checkRateLimitMock: vi.fn(async () => ({
+    allowed: true,
+    limit: 10,
+    remaining: 9,
+    resetAt: Date.now() + 60_000,
+    degraded: false,
+  })),
+}));
+
+vi.mock("@/auth", () => ({ auth: authMock }));
+
+vi.mock("@/lib/redis", () => ({
+  checkRateLimitDetailed: checkRateLimitMock,
 }));
 
 vi.mock("@/lib/armor/scanner", () => ({
@@ -15,6 +29,12 @@ vi.mock("@/lib/middleware/rate-limit", () => ({
     rateLimitConfigs.push(config);
     return handler;
   },
+  TIERS: {
+    SCAN: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+    SCAN_USER: { limit: 10, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+  },
+  buildRateLimitHeaders: vi.fn(() => ({ "X-RateLimit-Limit": "10" })),
+  secondsUntilReset: vi.fn(() => 60),
 }));
 
 vi.mock("@/lib/middleware/error-handler", () => {
@@ -152,4 +172,21 @@ describe("POST /api/cli/scan", () => {
     expect((await post({ files: [] })).status).toBe(400);
     expect(scanPullRequestMock).not.toHaveBeenCalled();
   });
+
+  it("returns 429 when authenticated user rate limit is exceeded", async () => {
+    authMock.mockResolvedValueOnce({ user: { id: "user-cli-1" } } as any);
+    checkRateLimitMock.mockResolvedValueOnce({
+      allowed: false,
+      limit: 10,
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      degraded: false,
+    });
+
+    const res = await post({ files: [{ path: "src/app.ts", content: "const a = 1;" }] });
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: "Too Many Requests" });
+    expect(scanPullRequestMock).not.toHaveBeenCalled();
+  });
 });
+

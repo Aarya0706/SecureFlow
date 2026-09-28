@@ -3,7 +3,13 @@ import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
 import { generateRemediationPatchFlow } from "@/ai/flows/generate-remediation-patch";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
-import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
+import {
+  withRateLimit,
+  TIERS,
+  buildRateLimitHeaders,
+  secondsUntilReset,
+} from "@/lib/middleware/rate-limit";
+import { checkRateLimitDetailed } from "@/lib/redis";
 
 /**
  * POST /api/findings/[id]/remediate
@@ -26,9 +32,8 @@ import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
  *    The schema has `fileLocation`. At runtime this was always `undefined`,
  *    so the AI received an empty file path on every call.
  *
- * 3. No rate limit — this is the only AI-calling route in the directory with
- *    no `withRateLimit` wrapper. Added using the same TIERS.AI_STREAM tier
- *    the explain-stream route uses.
+ * 3. Rate limiting — dual-tier rate limiting: IP-based outer guard (`withRateLimit`)
+ *    and strict per-user inner guard (`checkRateLimitDetailed`) to prevent LLM denial-of-wallet.
  */
 const handler = withErrorHandler(async function POST(
   req: NextRequest,
@@ -39,6 +44,32 @@ const handler = withErrorHandler(async function POST(
     throw new AppError("Unauthorized", 401);
   }
   const userId = session.user.id;
+
+  // Strict user-based token bucket: inner guard keyed per authenticated user
+  const userLimit = await checkRateLimitDetailed(
+    `rate-limit:findings:remediate:user:${userId}`,
+    TIERS.AI_STREAM_USER.limit,
+    TIERS.AI_STREAM_USER.windowSeconds,
+    {
+      fallbackStrategy: TIERS.AI_STREAM_USER.fallbackStrategy,
+      timeoutMs: TIERS.AI_STREAM_USER.timeoutMs,
+    },
+  );
+  if (!userLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too Many Requests",
+        message: "You have exceeded the rate limit. Please try again later.",
+      },
+      {
+        status: 429,
+        headers: {
+          ...buildRateLimitHeaders(userLimit),
+          "Retry-After": String(secondsUntilReset(userLimit.resetAt)),
+        },
+      },
+    );
+  }
 
   const { id } = await params;
 

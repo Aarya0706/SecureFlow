@@ -46,8 +46,28 @@ vi.mock("@/lib/middleware/error-handler", () => {
   };
 });
 
+const mockCheckRateLimitDetailed = vi.hoisted(() =>
+  vi.fn(async () => ({
+    allowed: true,
+    limit: 10,
+    remaining: 9,
+    resetAt: Date.now() + 60_000,
+    degraded: false,
+  })),
+);
+
+vi.mock("@/lib/redis", () => ({
+  checkRateLimitDetailed: mockCheckRateLimitDetailed,
+}));
+
 vi.mock("@/lib/middleware/rate-limit", () => ({
   withRateLimit: <T>(handler: T): T => handler,
+  TIERS: {
+    SCAN: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+    SCAN_USER: { limit: 10, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+  },
+  buildRateLimitHeaders: vi.fn(() => ({ "X-RateLimit-Limit": "10" })),
+  secondsUntilReset: vi.fn(() => 60),
 }));
 
 import { POST, MAX_REQUEST_BYTES } from "./route";
@@ -266,4 +286,30 @@ describe("POST /api/sbom/scan", () => {
       );
     });
   });
+
+  describe("user rate limiting", () => {
+    it("returns 429 when user rate limit is exceeded", async () => {
+      mockCheckRateLimitDetailed.mockResolvedValueOnce({
+        allowed: false,
+        limit: 10,
+        remaining: 0,
+        resetAt: Date.now() + 60_000,
+        degraded: false,
+      });
+
+      const req = makePostRequest({
+        fileName: "package.json",
+        content: JSON.stringify({ dependencies: { express: "4.18.2" } }),
+      });
+
+      const res = await POST(req);
+
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        error: "Too Many Requests",
+      });
+      expect(enqueueSbomScanMock).not.toHaveBeenCalled();
+    });
+  });
 });
+

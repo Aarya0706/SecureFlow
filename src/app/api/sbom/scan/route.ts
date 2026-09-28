@@ -12,7 +12,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
-import { withRateLimit } from "@/lib/middleware/rate-limit";
+import {
+  withRateLimit,
+  TIERS,
+  buildRateLimitHeaders,
+  secondsUntilReset,
+} from "@/lib/middleware/rate-limit";
+import { checkRateLimitDetailed } from "@/lib/redis";
 import { enqueueSbomScan, MAX_SBOM_BYTES } from "@/lib/queue/sbomQueue";
 import { isSupportedManifest, SUPPORTED_MANIFESTS } from "@/lib/sbom/dependency-parser";
 import prisma from "@/lib/prisma";
@@ -93,6 +99,33 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   }
   const userId = session.user.id;
 
+  // Strict user-based rate limit: inner guard keyed per authenticated user
+  const userLimit = await checkRateLimitDetailed(
+    `rate-limit:sbom:scan:user:${userId}`,
+    TIERS.SCAN_USER.limit,
+    TIERS.SCAN_USER.windowSeconds,
+    {
+      fallbackStrategy: TIERS.SCAN_USER.fallbackStrategy,
+      timeoutMs: TIERS.SCAN_USER.timeoutMs,
+    },
+  );
+  if (!userLimit.allowed) {
+    return NextResponse.json(
+      {
+        error: "Too Many Requests",
+        message: "You have exceeded the rate limit. Please try again later.",
+      },
+      {
+        status: 429,
+        headers: {
+          ...NO_STORE,
+          ...buildRateLimitHeaders(userLimit),
+          "Retry-After": String(secondsUntilReset(userLimit.resetAt)),
+        },
+      },
+    );
+  }
+
   // 1. Early Content-Length check: reject oversized requests before reading body
   const contentLengthHeader = req.headers.get("content-length");
   if (contentLengthHeader) {
@@ -165,8 +198,7 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
 });
 
 export const POST = withRateLimit(handler, {
-  limit: 30,
-  windowSeconds: 60,
+  ...TIERS.SCAN,
   keyPrefix: "sbom:scan",
 });
 

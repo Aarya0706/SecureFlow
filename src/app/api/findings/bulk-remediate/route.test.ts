@@ -21,9 +21,28 @@ vi.mock("@/ai/flows/generate-remediation-patch", () => ({
   generateRemediationPatchFlow: generatePatchMock,
 }));
 
+const mockCheckRateLimitDetailed = vi.hoisted(() =>
+  vi.fn(async () => ({
+    allowed: true,
+    limit: 10,
+    remaining: 9,
+    resetAt: Date.now() + 60_000,
+    degraded: false,
+  })),
+);
+
+vi.mock("@/lib/redis", () => ({
+  checkRateLimitDetailed: mockCheckRateLimitDetailed,
+}));
+
 vi.mock("@/lib/middleware/rate-limit", () => ({
-  TIERS: { AI_STREAM: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed" } },
+  TIERS: {
+    AI_STREAM: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed" },
+    AI_STREAM_USER: { limit: 10, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+  },
   withRateLimit: <T>(handler: T): T => handler,
+  buildRateLimitHeaders: vi.fn(() => ({ "X-RateLimit-Limit": "10" })),
+  secondsUntilReset: vi.fn(() => 60),
 }));
 
 import { POST } from "./route";
@@ -181,4 +200,20 @@ describe("POST /api/findings/bulk-remediate (#814)", () => {
     expect(generatePatchMock).toHaveBeenCalledTimes(2);
     expect(patchUpsert).toHaveBeenCalledTimes(2);
   });
+
+  it("returns 429 when user rate limit is exceeded", async () => {
+    mockCheckRateLimitDetailed.mockResolvedValueOnce({
+      allowed: false,
+      limit: 10,
+      remaining: 0,
+      resetAt: Date.now() + 60_000,
+      degraded: false,
+    });
+
+    const res = await POST(makeRequest({ findingIds: ["f-1"] }));
+    expect(res.status).toBe(429);
+    expect(findingFindMany).not.toHaveBeenCalled();
+    expect(generatePatchMock).not.toHaveBeenCalled();
+  });
 });
+
