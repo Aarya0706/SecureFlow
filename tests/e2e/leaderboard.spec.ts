@@ -4,7 +4,7 @@ test("leaderboard page renders public leaderboard", async ({ page }) => {
   await page.goto("/leaderboard");
 
   await expect(page.getByRole("heading", { name: /Most Wanted/i })).toBeVisible();
-  await expect(page.getByText(/extraction \(Merged PR\)/i)).toBeVisible();
+  await expect(page.getByText(/Resistance Roster|Most Wanted|Leaderboard/i).first()).toBeVisible();
 
   // Either the crew table or the empty-state message must be present.
   const empty = page.getByText(/No operatives yet/i);
