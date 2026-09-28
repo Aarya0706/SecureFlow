@@ -59,7 +59,7 @@ test("score below 40 resolves to rank D tagline", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(`${BASE}?project=LowScore&score=20`);
 
-  await expect(page.getByText(/Blown cover/i)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/Blown cover/i).first()).toBeVisible({ timeout: 10_000 });
 });
 
 test("footer branding is present", async ({ page }) => {
