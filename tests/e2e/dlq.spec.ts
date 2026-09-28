@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createHmac } from "crypto";
 
-const SECRET = "e2e-webhook-secret";
+const SECRET = process.env.GITHUB_WEBHOOK_SECRET || "e2e-webhook-secret";
 
 /**
  * Signs a webhook payload body with HMAC-SHA256 using the test secret.
