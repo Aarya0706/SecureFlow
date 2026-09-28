@@ -38,7 +38,12 @@ vi.mock("@/lib/redis", () => ({
 vi.mock("@/lib/middleware/rate-limit", () => ({
   TIERS: {
     AI_STREAM: { limit: 20, windowSeconds: 60, fallbackStrategy: "fail-closed" },
-    AI_STREAM_USER: { limit: 10, windowSeconds: 60, fallbackStrategy: "fail-closed", timeoutMs: 1000 },
+    AI_STREAM_USER: {
+      limit: 10,
+      windowSeconds: 60,
+      fallbackStrategy: "fail-closed",
+      timeoutMs: 1000,
+    },
   },
   withRateLimit: <T>(handler: T): T => handler,
   buildRateLimitHeaders: vi.fn(() => ({ "X-RateLimit-Limit": "10" })),
@@ -216,4 +221,3 @@ describe("POST /api/findings/bulk-remediate (#814)", () => {
     expect(generatePatchMock).not.toHaveBeenCalled();
   });
 });
-

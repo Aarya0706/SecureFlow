@@ -112,10 +112,7 @@ export const STREAM_PREFIXES: readonly string[] = [
 ];
 
 /** Suffixes of AI-heavy routes under `/api/findings/[id]/`. */
-export const FINDINGS_STREAM_SUFFIXES: readonly string[] = [
-  "/explain-stream",
-  "/remediate",
-];
+export const FINDINGS_STREAM_SUFFIXES: readonly string[] = ["/explain-stream", "/remediate"];
 
 /**
  * Normalise a pathname before matching.

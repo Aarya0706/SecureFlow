@@ -29,7 +29,8 @@ function secured(response: NextResponse): NextResponse {
 export default auth(async function middleware(
   request: NextRequest & {
     auth?: {
-      user?: { id?: string; codename?: string; roles?: string[] };
+      // Add `| null` to the codename property
+      user?: { id?: string; codename?: string | null; roles?: string[] };
       roles?: string[];
     } | null;
   },

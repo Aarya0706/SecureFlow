@@ -296,4 +296,3 @@ describe("POST /api/findings/[id]/remediate — rate limiting", () => {
     expect(generatePatchMock).not.toHaveBeenCalled();
   });
 });
-

@@ -130,7 +130,9 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
     await expect(page.getByText("Failure Reason").first()).toBeVisible();
 
     // The seeded failure reason string should be visible.
-    await expect(page.getByText("GitHub API rate limit exceeded after 3 attempts").first()).toBeVisible();
+    await expect(
+      page.getByText("GitHub API rate limit exceeded after 3 attempts").first(),
+    ).toBeVisible();
 
     // The "Job Data Payload" section should also appear.
     await expect(page.getByText("Job Data Payload").first()).toBeVisible();
