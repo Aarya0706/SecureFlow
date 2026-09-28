@@ -102,16 +102,16 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
     await page.goto("/admin/queue");
 
     // Table header columns
-    await expect(page.getByRole("columnheader", { name: "Target / Event" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Action" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Failed At" })).toBeVisible();
-    await expect(page.getByRole("columnheader", { name: "Actions" })).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Target / Event" }).first()).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Action" }).first()).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Failed At" }).first()).toBeVisible();
+    await expect(page.getByRole("columnheader", { name: "Actions" }).first()).toBeVisible();
 
     // First seeded failed job — repo visible
-    await expect(page.getByText("mock-owner/mock-repo")).toBeVisible();
+    await expect(page.getByText("mock-owner/mock-repo").first()).toBeVisible();
 
     // Second seeded failed job — different repo
-    await expect(page.getByText("mock-owner/another-repo")).toBeVisible();
+    await expect(page.getByText("mock-owner/another-repo").first()).toBeVisible();
 
     // Both jobs show the `opened` and `push` action badges
     await expect(page.getByText("opened").first()).toBeVisible();
@@ -123,11 +123,11 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
     await page.goto("/admin/queue");
 
     // Click the first row to expand it.
-    const firstRow = page.locator("tbody tr").first();
+    const firstRow = page.locator("tbody tr:not(:has(td[colspan]))").first();
     await firstRow.click();
 
     // After expansion the "Failure Reason" section should appear.
-    await expect(page.getByText("Failure Reason")).toBeVisible();
+    await expect(page.getByText("Failure Reason").first()).toBeVisible();
 
     // The seeded failure reason string should be visible.
     await expect(page.getByText("GitHub API rate limit exceeded after 3 attempts")).toBeVisible();
@@ -252,8 +252,9 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
     const firstCheckbox = page
       .locator("tbody tr:not(:has(td[colspan]))")
       .first()
-      .locator('input[type="checkbox"]');
-    await firstCheckbox.check();
+      .locator('button[role="checkbox"], input[type="checkbox"]')
+      .first();
+    await firstCheckbox.click();
 
     // When at least one job is selected, the bulk-action toolbar appears.
     await expect(page.getByText("1 selected")).toBeVisible();
