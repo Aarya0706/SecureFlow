@@ -29,7 +29,7 @@ function secured(response: NextResponse): NextResponse {
 export default auth(async function middleware(
   request: NextRequest & {
     auth?: {
-      user?: { roles?: string[] };
+      user?: { id?: string; codename?: string; roles?: string[] };
       roles?: string[];
     } | null;
   },
@@ -67,6 +67,27 @@ export default auth(async function middleware(
             },
           ),
         );
+      }
+
+      // 1b. User-based rate limiting on /api/* routes for authenticated callers (#644)
+      const userId = token?.user?.id || (token as any)?.id || (token as any)?.sub;
+      if (userId) {
+        const userLimiter = getApiRateLimiter(rateLimitClass, "user");
+        if (userLimiter) {
+          const userDecision = await userLimiter.limit(userId);
+
+          if (!userDecision.success) {
+            return secured(
+              NextResponse.json(
+                { error: "Too Many Requests", message: "Rate limit exceeded" },
+                {
+                  status: 429,
+                  headers: rateLimitHeaders(userDecision),
+                },
+              ),
+            );
+          }
+        }
       }
     }
   }

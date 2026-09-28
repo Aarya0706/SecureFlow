@@ -1,4 +1,10 @@
-import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
+import {
+  withRateLimit,
+  TIERS,
+  buildRateLimitHeaders,
+  secondsUntilReset,
+} from "@/lib/middleware/rate-limit";
+import { checkRateLimitDetailed } from "@/lib/redis";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
@@ -22,6 +28,32 @@ const handler = async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     const userId = session.user.id;
+
+    // Strict user-based token bucket: inner guard keyed per authenticated user
+    const userLimit = await checkRateLimitDetailed(
+      `rate-limit:bulk-remediate:user:${userId}`,
+      TIERS.AI_STREAM_USER.limit,
+      TIERS.AI_STREAM_USER.windowSeconds,
+      {
+        fallbackStrategy: TIERS.AI_STREAM_USER.fallbackStrategy,
+        timeoutMs: TIERS.AI_STREAM_USER.timeoutMs,
+      },
+    );
+    if (!userLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too Many Requests",
+          message: "You have exceeded the rate limit. Please try again later.",
+        },
+        {
+          status: 429,
+          headers: {
+            ...buildRateLimitHeaders(userLimit),
+            "Retry-After": String(secondsUntilReset(userLimit.resetAt)),
+          },
+        },
+      );
+    }
 
     let body: { action?: string; findingIds?: unknown };
     try {

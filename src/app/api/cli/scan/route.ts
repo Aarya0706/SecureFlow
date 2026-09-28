@@ -16,8 +16,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { auth } from "@/auth";
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
-import { withRateLimit } from "@/lib/middleware/rate-limit";
+import {
+  withRateLimit,
+  TIERS,
+  buildRateLimitHeaders,
+  secondsUntilReset,
+} from "@/lib/middleware/rate-limit";
+import { checkRateLimitDetailed } from "@/lib/redis";
 import { scanner, type FileChange } from "@/lib/armor/scanner";
 
 export const MAX_FILES_PER_REQUEST = 100;
@@ -74,6 +81,36 @@ function toSyntheticAddedPatch(content: string): string {
 }
 
 const handler = withErrorHandler(async function POST(req: NextRequest) {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (userId) {
+    const userLimit = await checkRateLimitDetailed(
+      `rate-limit:cli:scan:user:${userId}`,
+      TIERS.SCAN_USER.limit,
+      TIERS.SCAN_USER.windowSeconds,
+      {
+        fallbackStrategy: TIERS.SCAN_USER.fallbackStrategy,
+        timeoutMs: TIERS.SCAN_USER.timeoutMs,
+      },
+    );
+    if (!userLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: "Too Many Requests",
+          message: "You have exceeded the rate limit. Please try again later.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Cache-Control": "no-store",
+            ...buildRateLimitHeaders(userLimit),
+            "Retry-After": String(secondsUntilReset(userLimit.resetAt)),
+          },
+        },
+      );
+    }
+  }
+
   let body: unknown;
   try {
     body = await req.json();
