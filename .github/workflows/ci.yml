@@ -266,8 +266,7 @@ jobs:
         run: npx prisma generate
 
       - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps
 
       - name: Run E2E Tests
         run: npm run test:e2e
@@ -276,9 +275,15 @@ jobs:
           E2E_BASE_URL: http://localhost:9002
           AUTH_SECRET: ci-test-secret-not-for-production
           REDIS_URL: ""
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
-          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@localhost:5432/secureflow' }}
+          DATABASE_POOL_URL: postgresql://ci:ci@localhost:5432/secureflow
+          GROQ_API_KEY: ci-build-placeholder
+          GITHUB_APP_ID: "1"
+          GITHUB_WEBHOOK_SECRET: ci-build-placeholder
+          GITHUB_PRIVATE_KEY: ci-build-placeholder
+          GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID || 'ci-build-placeholder' }}
+          GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET || 'ci-build-placeholder' }}
+          NEXT_PUBLIC_APP_URL: http://localhost:9002
 
       - name: Upload Playwright Report
         uses: actions/upload-artifact@v7
