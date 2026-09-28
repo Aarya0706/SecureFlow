@@ -307,8 +307,10 @@ secrets:
   # If existingSecret is set, the chart uses the specified secret rather than creating one.
   existingSecret: ""
 
-  # Plaintext values to populate if existingSecret is empty
-  authSecret: "changeme-generate-a-secure-random-auth-secret"
+  # Plaintext values to populate if existingSecret is empty.
+  # CRITICAL: A secure authSecret MUST be provided explicitly when existingSecret is not configured.
+  # Generate a cryptographically secure key with: openssl rand -base64 32
+  authSecret: ""
   groqApiKey: ""
   githubAppId: ""
   githubWebhookSecret: ""

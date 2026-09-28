@@ -30,11 +30,17 @@ cd helm/secureflow
 
 ### 2. Install in development / standalone mode (with in-cluster Postgres & Redis)
 
+Generate a secure random authentication secret and pass it to Helm:
+
 ```bash
+AUTH_SECRET=$(openssl rand -base64 32)
+
 helm install secureflow ./helm/secureflow \
-  --set secrets.authSecret="a-secure-random-auth-secret-here" \
+  --set secrets.authSecret="${AUTH_SECRET}" \
   --set secrets.groqApiKey="gsk_your_groq_api_key"
 ```
+
+> **Note:** A secure `secrets.authSecret` or `secrets.existingSecret` is mandatory. The chart rejects empty secrets and known placeholder values (such as `changeme*`).
 
 ### 3. Verify deployment
 
@@ -155,6 +161,7 @@ helm upgrade --install secureflow ./helm/secureflow -f production-values.yaml
 | `ingress.enabled`            | Enable Ingress resource                         | `false`          |
 | `ingress.className`          | Ingress controller class name                   | `nginx`          |
 | `secrets.existingSecret`     | Name of pre-created secret for credentials      | `""`             |
+| `secrets.authSecret`         | Authentication secret for NextAuth session JWTs (required if `existingSecret` is empty) | `""`             |
 | `postgresql.enabled`         | Deploy in-cluster PostgreSQL StatefulSet        | `true`           |
 | `postgresql.podDisruptionBudget.enabled` | Enable PodDisruptionBudget for PostgreSQL   | `false`          |
 | `postgresql.external.host`   | Hostname of external PostgreSQL instance        | `""`             |

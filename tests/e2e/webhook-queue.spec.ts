@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { createHmac } from "crypto";
 
-const SECRET = "e2e-webhook-secret";
+const SECRET = process.env.GITHUB_WEBHOOK_SECRET || "e2e-webhook-secret";
 
 function sign(body: string, secret: string) {
   return "sha256=" + createHmac("sha256", secret).update(body).digest("hex");

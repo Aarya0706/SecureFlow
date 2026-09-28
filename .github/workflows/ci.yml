@@ -279,7 +279,7 @@ jobs:
           DATABASE_POOL_URL: postgresql://ci:ci@localhost:5432/secureflow
           GROQ_API_KEY: ci-build-placeholder
           GITHUB_APP_ID: "1"
-          GITHUB_WEBHOOK_SECRET: ci-build-placeholder
+          GITHUB_WEBHOOK_SECRET: e2e-webhook-secret
           GITHUB_PRIVATE_KEY: ci-build-placeholder
           GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID || 'ci-build-placeholder' }}
           GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET || 'ci-build-placeholder' }}
