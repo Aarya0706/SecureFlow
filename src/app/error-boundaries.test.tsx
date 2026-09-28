@@ -20,9 +20,8 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/components/theme-toggle", () => ({
-  ThemeToggle: () => null,
+  ThemeToggle: () => <div data-testid="theme-toggle" />,
 }));
-
 
 /** A thrown error as the boundaries actually receive it in production. */
 function boundaryError(digest?: string): Error & { digest?: string } {

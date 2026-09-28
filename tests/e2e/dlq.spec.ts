@@ -124,19 +124,19 @@ test.describe("Dead Letter Queue (DLQ) — E2E UI Coverage (#402)", () => {
 
     // Click the first row to expand it.
     const firstRow = page.locator("tbody tr:not(:has(td[colspan]))").first();
-    await firstRow.click();
+    await firstRow.locator("td:nth-child(3)").click();
 
     // After expansion the "Failure Reason" section should appear.
     await expect(page.getByText("Failure Reason").first()).toBeVisible();
 
     // The seeded failure reason string should be visible.
-    await expect(page.getByText("GitHub API rate limit exceeded after 3 attempts")).toBeVisible();
+    await expect(page.getByText("GitHub API rate limit exceeded after 3 attempts").first()).toBeVisible();
 
     // The "Job Data Payload" section should also appear.
-    await expect(page.getByText("Job Data Payload")).toBeVisible();
+    await expect(page.getByText("Job Data Payload").first()).toBeVisible();
 
     // The raw JSON payload should contain identifiable event data.
-    await expect(page.getByText("pull_request")).toBeVisible();
+    await expect(page.getByText("pull_request").first()).toBeVisible();
   });
 
   // ── Scenario 4: Filter / search the DLQ table ──────────────────────────────

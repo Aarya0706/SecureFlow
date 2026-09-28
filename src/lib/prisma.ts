@@ -119,7 +119,7 @@ function createMockPrismaClient() {
     if (model === "auditLog") {
       if (method === "count") return 8;
       if (method === "findMany") {
-        if (args[0]?.select?.action) {
+        if (args[0]?.select?.action && Object.keys(args[0]?.select || {}).length === 1) {
           return [{ action: "UPDATE_ROLE" }, { action: "DELETE_USER" }, { action: "ADD_REPO" }];
         }
         return [
