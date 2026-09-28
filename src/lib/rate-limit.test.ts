@@ -559,8 +559,52 @@ describe("CircuitBreaker integration", () => {
   });
 });
 
+// ---- RedisApiRateLimiter & getApiRateLimiter ----
+
+describe("getApiRateLimiter & RedisApiRateLimiter", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.UPSTASH_REDIS_REST_URL;
+  });
+
+  it("returns a limiter that utilizes Redis infrastructure when Upstash is not configured", async () => {
+    const { getApiRateLimiter, resetApiRateLimiters } = await import("./rate-limit");
+    resetApiRateLimiters();
+
+    const limiter = getApiRateLimiter("stream", "ip");
+    expect(limiter).toBeDefined();
+
+    const decision1 = await limiter.limit("198.51.100.1");
+    expect(decision1.success).toBe(true);
+    expect(decision1.limit).toBe(20);
+    expect(decision1.remaining).toBe(19);
+
+    const userLimiter = getApiRateLimiter("stream", "user");
+    expect(userLimiter).toBeDefined();
+
+    const userDecision = await userLimiter.limit("user-stream-test");
+    expect(userDecision.success).toBe(true);
+    expect(userDecision.limit).toBe(10);
+    expect(userDecision.remaining).toBe(9);
+  });
+
+  it("strictly enforces rate limits and returns success:false when budget is exhausted", async () => {
+    const { RedisApiRateLimiter } = await import("./rate-limit");
+    const limiter = new RedisApiRateLimiter({ limit: 2, windowSeconds: 60, keyPrefix: "test-redis-limiter" }, "fail-closed");
+
+    const r1 = await limiter.limit("client-x");
+    expect(r1.success).toBe(true);
+    const r2 = await limiter.limit("client-x");
+    expect(r2.success).toBe(true);
+    const r3 = await limiter.limit("client-x");
+    expect(r3.success).toBe(false);
+    expect(r3.remaining).toBe(0);
+  });
+});
+
 // Safe safeguard for Redis timeout unhandled rejection (#981)
 process.on("unhandledRejection", (err) => {
   if (err instanceof Error && err.message.includes("Redis timeout")) return;
   throw err;
 });
+
