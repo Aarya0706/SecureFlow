@@ -31,7 +31,7 @@
     "dist"
   ],
   "devDependencies": {
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.6.3",
     "typescript": "^6",
     "vitest": "^5.0.2"
   }
