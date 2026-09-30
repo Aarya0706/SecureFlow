@@ -6,21 +6,32 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // the pure helpers alone, because the whole defect was an absent call: a test of
 // `loadOwnedRepository` would have passed on the vulnerable route too.
 
-const { authMock, enqueueScanMock, repositoryFindFirst, scanJobFindUnique, scanJobStatusMock } =
-  vi.hoisted(() => ({
-    authMock: vi.fn(),
-    enqueueScanMock: vi.fn(),
-    repositoryFindFirst: vi.fn(),
-    scanJobFindUnique: vi.fn(),
-    scanJobStatusMock: vi.fn(),
-  }));
+const {
+  authMock,
+  enqueueScanMock,
+  policyTemplateFindMany,
+  repositoryFindFirst,
+  scanJobFindUnique,
+  scanJobStatusMock,
+  userPolicyToggleFindMany,
+} = vi.hoisted(() => ({
+  authMock: vi.fn(),
+  enqueueScanMock: vi.fn(),
+  policyTemplateFindMany: vi.fn(),
+  repositoryFindFirst: vi.fn(),
+  scanJobFindUnique: vi.fn(),
+  scanJobStatusMock: vi.fn(),
+  userPolicyToggleFindMany: vi.fn(),
+}));
 
 vi.mock("@/auth", () => ({ auth: authMock }));
 
 vi.mock("@/lib/prisma", () => ({
   default: {
+    policyTemplate: { findMany: policyTemplateFindMany },
     repository: { findFirst: repositoryFindFirst },
     scanJob: { findUnique: scanJobFindUnique },
+    userPolicyToggle: { findMany: userPolicyToggleFindMany },
   },
 }));
 
@@ -99,6 +110,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   authMock.mockResolvedValue({ user: { id: "user-1" } });
   repositoryFindFirst.mockResolvedValue(OWNED_REPO);
+  policyTemplateFindMany.mockResolvedValue([]);
+  userPolicyToggleFindMany.mockResolvedValue([]);
   enqueueScanMock.mockResolvedValue({ jobId: "scan-1", scanJobId: "sj-1" });
   scanJobFindUnique.mockResolvedValue({
     repositoryId: "repo-1",
@@ -149,6 +162,70 @@ describe("POST /api/findings", () => {
       scanJobId: "sj-1",
       pollingUrl: "/api/findings/status/sj-1",
     });
+  });
+
+  it("derives active policies from the database for the session user", async () => {
+    const defaultTemplate = {
+      id: "tpl-1",
+      name: "Enforce No Secrets",
+      description: "Detect hardcoded secrets",
+      isDefault: true,
+    };
+    const optionalTemplate = {
+      id: "tpl-2",
+      name: "SQLi Check",
+      description: "Detect SQL injection",
+      isDefault: false,
+    };
+    policyTemplateFindMany.mockResolvedValue([defaultTemplate, optionalTemplate]);
+    userPolicyToggleFindMany.mockResolvedValue([{ policyTemplateId: "tpl-2", isActive: true }]);
+
+    await POST(postRequest(VALID_BODY));
+
+    expect(enqueueScanMock).toHaveBeenCalledTimes(1);
+    const enqueuedData = enqueueScanMock.mock.calls[0][0];
+    expect(enqueuedData.activePolicies).toEqual([defaultTemplate, optionalTemplate]);
+  });
+
+  it("cannot be bypassed by supplying empty activePolicies in the request body", async () => {
+    const configuredTemplate = {
+      id: "tpl-1",
+      name: "Enforce Guardrails",
+      description: "Mandatory security policy",
+      isDefault: true,
+    };
+    policyTemplateFindMany.mockResolvedValue([configuredTemplate]);
+    userPolicyToggleFindMany.mockResolvedValue([]);
+
+    // Attacker attempts policy bypass by supplying empty activePolicies
+    await POST(postRequest({ ...VALID_BODY, activePolicies: [] }));
+
+    expect(enqueueScanMock).toHaveBeenCalledTimes(1);
+    const enqueuedData = enqueueScanMock.mock.calls[0][0];
+    expect(enqueuedData.activePolicies).toEqual([configuredTemplate]);
+  });
+
+  it("cannot be overridden by supplying custom activePolicies in the request body", async () => {
+    const serverTemplate = {
+      id: "tpl-server",
+      name: "Server Policy",
+      description: "Server enforced rule",
+      isDefault: true,
+    };
+    policyTemplateFindMany.mockResolvedValue([serverTemplate]);
+    userPolicyToggleFindMany.mockResolvedValue([]);
+
+    // Attacker attempts to replace server policies with custom relaxed rules
+    await POST(
+      postRequest({
+        ...VALID_BODY,
+        activePolicies: [{ description: "Custom relaxed fake policy" }],
+      }),
+    );
+
+    expect(enqueueScanMock).toHaveBeenCalledTimes(1);
+    const enqueuedData = enqueueScanMock.mock.calls[0][0];
+    expect(enqueuedData.activePolicies).toEqual([serverTemplate]);
   });
 
   it("scopes the repository lookup to the session user", async () => {
