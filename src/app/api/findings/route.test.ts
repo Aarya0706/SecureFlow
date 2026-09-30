@@ -261,6 +261,20 @@ describe("POST /api/findings", () => {
     expect(enqueueScanMock.mock.calls[0][0].userId).toBe("user-1");
   });
 
+  it("ignores client-supplied customIgnores in the body", async () => {
+    await POST(postRequest({ ...VALID_BODY, customIgnores: ["src/**", "vulnerable.ts"] }));
+
+    expect(enqueueScanMock).toHaveBeenCalledTimes(1);
+    expect(enqueueScanMock.mock.calls[0][0].customIgnores).toEqual([]);
+  });
+
+  it("ignores client-supplied customPlaceholders in the body", async () => {
+    await POST(postRequest({ ...VALID_BODY, customPlaceholders: ["CUSTOM_SECRET_PATTERN"] }));
+
+    expect(enqueueScanMock).toHaveBeenCalledTimes(1);
+    expect(enqueueScanMock.mock.calls[0][0].customPlaceholders).toEqual([]);
+  });
+
   it("rejects a malformed body with 400", async () => {
     const res = await POST(postRequest({ repositoryId: "repo-1" }));
 

@@ -123,6 +123,9 @@ export async function loadActivePoliciesForUser(
  *  - `userId`, because the actor is the session, never a request field;
  *  - `repositoryFullName`, because it is `Repository.fullName` and taking it
  *    from the body is what let a caller aim the GitHub App somewhere else;
+ *  - `customIgnores` and `customPlaceholders`, because ignore patterns and
+ *    placeholders must be governed by repository configuration (.secureflowignore)
+ *    rather than untrusted request parameters (#2).
  *  - `activePolicies`, because policy rules are derived server-side from
  *    database templates and user toggles, so a client cannot disable or alter
  *    security policies by sending an empty or modified array (#1).
@@ -146,8 +149,6 @@ export const scanRequestSchema = z.object({
       }),
     )
     .default([]),
-  customIgnores: z.array(z.string()).default([]),
-  customPlaceholders: z.array(z.string()).default([]),
 });
 
 export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
@@ -157,14 +158,18 @@ export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
  *
  * `repositoryId`, `repositoryFullName`, `userId`, and `activePolicies` are taken from
  * server-side authorization and database state, never from `body`.
+ * Ignore patterns and placeholders are initialized empty and loaded from repository
+ * configuration (.secureflowignore) by the scan engine.
  */
 export function buildScanJobData(args: {
   body: ScanRequestBody;
   repository: OwnedRepository;
   userId: string;
+  customIgnores?: string[];
+  customPlaceholders?: string[];
   activePolicies?: Array<{ description: string; [key: string]: unknown }>;
 }): ScanJobData {
-  const { body, repository, userId, activePolicies = [] } = args;
+  const { body, repository, userId, customIgnores = [], customPlaceholders = [], activePolicies = [] } = args;
 
   return {
     // Replaced by `enqueueScan`, which creates the row this refers to.
@@ -176,8 +181,8 @@ export function buildScanJobData(args: {
     headSha: body.headSha,
     fileChanges: body.fileChanges,
     activePolicies,
-    customIgnores: body.customIgnores,
-    customPlaceholders: body.customPlaceholders,
+    customIgnores,
+    customPlaceholders,
     userId,
   };
 }
