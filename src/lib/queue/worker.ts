@@ -1,8 +1,9 @@
-import { Worker, Job } from "bullmq";
+import { Worker, Job, DelayedError } from "bullmq";
 import { z } from "zod";
 import { redis } from "./redis";
 import { webhookDLQ, WebhookJobData } from "./webhookQueue";
 import { dlqRetryStateFor } from "./dlq-auto-retry";
+import { acquireLock, releaseLock } from "./lock";
 import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
 import { processScanJob, type ScanJobResult } from "@/lib/scanner/scanEngine";
 import type { ScanJobData } from "@/lib/queue/scanQueue";
@@ -561,6 +562,16 @@ export const worker = new Worker<WebhookJobData>(
         // leaving a permanent "⏳ Evaluating..." comment nothing ever updated.
         assertPullRequestContext(payload as any);
 
+          const lockKey = `pr-scan:${repository.full_name}:${pull_request.number}`;
+          const lockToken = await acquireLock(lockKey, 300000); // 5 minutes lock
+          if (!lockToken) {
+            console.warn(`[Worker] PR #${pull_request.number} on ${repository.full_name} is currently locked by a concurrent scan. Delaying job...`);
+            await job.moveToDelayed(Date.now() + 15000, job.token);
+            throw new DelayedError();
+          }
+
+          try {
+
         if (shouldScanPullRequestManifests(event, action)) {
           // Never throws (it logs and returns), so a manifest problem cannot
           // fail the code scan below. SBOM jobs are keyed by head SHA and file,
@@ -1075,6 +1086,9 @@ export const worker = new Worker<WebhookJobData>(
             }
           }
         }
+          } finally {
+            await releaseLock(lockKey, lockToken);
+          }
       }
     }
 
