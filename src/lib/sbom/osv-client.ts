@@ -11,6 +11,7 @@
 
 import type { Dependency, SeverityLevel, VulnerabilityMatch } from "@/types/sbom";
 import { severityFromCvssEntries } from "./cvss";
+import { compareVersions } from "./version-compare";
 
 const OSV_QUERY_URL = "https://api.osv.dev/v1/query";
 const OSV_VULN_URL = "https://api.osv.dev/v1/vulns";
@@ -99,27 +100,107 @@ export function extractSeverity(vuln: OsvVulnerability): SeverityLevel {
   return "MEDIUM";
 }
 
-export function extractFixedVersion(vuln: OsvVulnerability, packageName: string): string | null {
+/** One `[introduced, fixed)` (or `[introduced, last_affected]`) span of an OSV range. */
+interface AffectedInterval {
+  introduced: string;
+  fixed: string | null;
+  lastAffected: string | null;
+}
+
+/**
+ * Turn a range's flat event list into discrete intervals.
+ *
+ * A single OSV range routinely carries several `introduced`/`fixed` pairs, one
+ * per maintained release line (`semver`: fixed in 5.7.2, 6.3.1 and 7.5.2).
+ * Reading only the first `fixed` event, as this used to, reports the oldest
+ * branch's fix to everyone.
+ */
+function rangeIntervals(range: OsvAffectedRange): AffectedInterval[] {
+  const intervals: AffectedInterval[] = [];
+  let open: string | null = null;
+
+  for (const event of range.events ?? []) {
+    if (event.introduced !== undefined) {
+      if (open !== null) intervals.push({ introduced: open, fixed: null, lastAffected: null });
+      open = event.introduced;
+    } else if (event.fixed) {
+      intervals.push({ introduced: open ?? "0", fixed: event.fixed, lastAffected: null });
+      open = null;
+    } else if (event.last_affected) {
+      intervals.push({ introduced: open ?? "0", fixed: null, lastAffected: event.last_affected });
+      open = null;
+    }
+  }
+
+  if (open !== null) intervals.push({ introduced: open, fixed: null, lastAffected: null });
+
+  return intervals;
+}
+
+function containsVersion(interval: AffectedInterval, version: string): boolean {
+  if (compareVersions(version, interval.introduced) < 0) return false;
+  if (interval.fixed !== null) return compareVersions(version, interval.fixed) < 0;
+  if (interval.lastAffected !== null) return compareVersions(version, interval.lastAffected) <= 0;
+  return true;
+}
+
+function lowestVersion(versions: string[]): string | null {
+  let lowest: string | null = null;
+  for (const version of versions) {
+    if (lowest === null || compareVersions(version, lowest) < 0) lowest = version;
+  }
+  return lowest;
+}
+
+type OsvAffected = NonNullable<OsvVulnerability["affected"]>[number];
+
+function pickFixedVersion(entries: OsvAffected[], installedVersion: string | null): string | null {
+  // `GIT` ranges express `fixed` as a commit hash, which is not a version anyone
+  // can install.
+  const intervals = entries.flatMap((entry) =>
+    (entry.ranges ?? []).filter((range) => range.type !== "GIT").flatMap(rangeIntervals),
+  );
+  const fixes = intervals.flatMap((interval) => (interval.fixed ? [interval.fixed] : []));
+
+  if (fixes.length === 0) return null;
+
+  // Without an installed version there is nothing to select on; keep the
+  // historical "first fixed event" answer.
+  if (installedVersion === null) return fixes[0];
+
+  // The fix for the release line the installed version is on...
+  const containing = intervals
+    .filter((interval) => interval.fixed !== null && containsVersion(interval, installedVersion))
+    .map((interval) => interval.fixed as string);
+  const own = lowestVersion(containing);
+  if (own) return own;
+
+  // ...otherwise the nearest fix that is actually an upgrade. A fix at or below
+  // the installed version is never returned: "update to 5.2.4 or higher" is no
+  // advice to someone already on 8.16.0.
+  return lowestVersion(fixes.filter((fix) => compareVersions(fix, installedVersion) > 0));
+}
+
+/**
+ * The version that resolves the advisory for `installedVersion`.
+ *
+ * Advisories often list a fix per release line, so the installed version decides
+ * which one applies. When `installedVersion` is omitted (or `unknown`) the first
+ * fixed version in document order is returned, as before.
+ */
+export function extractFixedVersion(
+  vuln: OsvVulnerability,
+  packageName: string,
+  installedVersion?: string | null,
+): string | null {
+  const installed = installedVersion?.trim();
+  const target = installed && installed !== "unknown" ? installed : null;
   const lowerName = packageName.toLowerCase();
+  const affected = vuln.affected ?? [];
 
-  for (const affected of vuln.affected ?? []) {
-    if (affected.package?.name?.toLowerCase() !== lowerName) continue;
-    for (const range of affected.ranges ?? []) {
-      for (const event of range.events) {
-        if (event.fixed) return event.fixed;
-      }
-    }
-  }
+  const named = affected.filter((entry) => entry.package?.name?.toLowerCase() === lowerName);
 
-  for (const affected of vuln.affected ?? []) {
-    for (const range of affected.ranges ?? []) {
-      for (const event of range.events) {
-        if (event.fixed) return event.fixed;
-      }
-    }
-  }
-
-  return null;
+  return pickFixedVersion(named, target) ?? pickFixedVersion(affected, target);
 }
 
 // ── Per-dependency query ───────────────────────────────────────────────
@@ -155,7 +236,7 @@ export function mapOsvVulns(dep: Dependency, vulns: OsvVulnerability[]): Vulnera
     severity: extractSeverity(vuln),
     description:
       vuln.summary ?? vuln.details?.slice(0, 200) ?? `Known vulnerability in ${dep.name}`,
-    patchedVersion: extractFixedVersion(vuln, dep.name),
+    patchedVersion: extractFixedVersion(vuln, dep.name, dep.version),
   }));
 }
 
