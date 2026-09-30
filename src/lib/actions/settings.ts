@@ -3,6 +3,7 @@
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
 import { revalidatePath } from "next/cache";
+import { assertSlackWebhookUrl } from "@/lib/integrations/slack";
 
 export async function updateSlackWebhook(url: string | null) {
   const session = await auth();
@@ -12,13 +13,9 @@ export async function updateSlackWebhook(url: string | null) {
     throw new Error("Unauthorized");
   }
 
-  // Basic validation for URL
+  // Strict Slack webhook URL validation
   if (url !== null && url.trim() !== "") {
-    try {
-      new URL(url);
-    } catch {
-      throw new Error("Invalid URL format");
-    }
+    assertSlackWebhookUrl(url);
   }
 
   await prisma.user.update({

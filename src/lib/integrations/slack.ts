@@ -244,35 +244,108 @@ export function buildSlackAlert(args: BuildSlackAlertArgs): SlackMessage | null 
   return { text: fallback, blocks };
 }
 
+import {
+  dispatchOutboundWebhook,
+  resolveDispatchConfig,
+  type DispatchConfig,
+  type DispatchOptions,
+} from "@/lib/queue/outbound-dispatch";
+
 /**
- * POST a message to a Slack Incoming Webhook.
+ * Validate that a raw URL is a genuine Slack Incoming Webhook destination.
+ *
+ * Enforces:
+ *  - non-empty string, trimmed
+ *  - valid absolute URL
+ *  - protocol is strictly https:
+ *  - hostname is strictly hooks.slack.com
+ *  - no credentials (username / password)
+ *  - no custom ports (only default HTTPS port 443 / empty)
+ *  - pathname starts with /services/
+ *  - no query parameters or hash fragments
+ *
+ * Throws a descriptive Error on any policy violation, or returns the parsed URL.
+ */
+export function assertSlackWebhookUrl(rawUrl: string): URL {
+  if (typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+    throw new Error("Slack webhook URL is missing.");
+  }
+
+  let url: URL;
+  try {
+    url = new URL(rawUrl.trim());
+  } catch {
+    throw new Error("Invalid Slack webhook URL format.");
+  }
+
+  if (url.protocol !== "https:") {
+    throw new Error(`Invalid Slack webhook scheme "${url.protocol}" — only https is allowed.`);
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (hostname !== "hooks.slack.com") {
+    throw new Error(`Invalid Slack webhook host "${hostname}" — only hooks.slack.com is allowed.`);
+  }
+
+  if (url.username || url.password) {
+    throw new Error("Slack webhook URL must not embed credentials.");
+  }
+
+  if (url.port && url.port !== "" && url.port !== "443") {
+    throw new Error("Slack webhook URL must not specify a custom port.");
+  }
+
+  if (!url.pathname.startsWith("/services/")) {
+    throw new Error("Slack webhook URL path must start with /services/.");
+  }
+
+  if (url.search !== "" || url.hash !== "") {
+    throw new Error("Slack webhook URL must not include query parameters or fragments.");
+  }
+
+  return url;
+}
+
+/**
+ * POST a message to a Slack Incoming Webhook using the hardened outbound dispatch pipeline.
  *
  * Returns `true` on a 2xx and `false` otherwise; it never throws, so callers can
- * treat notification as best-effort. A 10-second timeout keeps a hung Slack
- * endpoint from holding a worker open indefinitely.
+ * treat notification as best-effort. Reuses dispatchOutboundWebhook for SSRF
+ * protection, DNS resolution validation, redirect refusal, and timeouts.
  */
-export async function sendSlackAlert(webhookUrl: string, message: SlackMessage): Promise<boolean> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10_000);
-
+export async function sendSlackAlert(
+  webhookUrl: string,
+  message: SlackMessage,
+  options: Partial<DispatchOptions> = {},
+): Promise<boolean> {
   try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message),
-      signal: controller.signal,
-    });
+    const validatedUrl = assertSlackWebhookUrl(webhookUrl);
 
-    if (!res.ok) {
-      console.error(`[Slack] Webhook responded ${res.status} ${res.statusText}`);
-      return false;
-    }
-    return true;
+    const baseConfig = options.config ?? resolveDispatchConfig();
+    const config: DispatchConfig = {
+      ...baseConfig,
+      allowedHosts: ["hooks.slack.com"],
+      allowInsecureHttp: false,
+      allowPrivateNetworks: false,
+    };
+
+    const res = await dispatchOutboundWebhook(
+      {
+        url: validatedUrl.toString(),
+        payload: message as unknown as Record<string, unknown>,
+      },
+      {
+        ...options,
+        config,
+      },
+    );
+
+    return res.status >= 200 && res.status < 300;
   } catch (err) {
-    console.error("[Slack] Failed to deliver alert:", err);
+    // A destination refusal or delivery error must never log the secret webhook token
+    const messageStr = err instanceof Error ? err.message : String(err);
+    console.error("[Slack] Failed to deliver alert:", messageStr);
     return false;
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -285,6 +358,7 @@ export async function notifyHighSeverityFindings(
   webhookUrl: string | null | undefined,
   args: BuildSlackAlertArgs,
   minSeverity?: Severity,
+  options?: Partial<DispatchOptions>,
 ): Promise<boolean> {
   if (!webhookUrl || !webhookUrl.trim()) return false;
 
@@ -292,5 +366,5 @@ export async function notifyHighSeverityFindings(
   const message = buildSlackAlert(alertArgs);
   if (!message) return false;
 
-  return sendSlackAlert(webhookUrl.trim(), message);
+  return sendSlackAlert(webhookUrl.trim(), message, options);
 }

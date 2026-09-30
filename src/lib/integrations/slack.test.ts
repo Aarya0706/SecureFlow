@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  assertSlackWebhookUrl,
   packSectionBodies,
   SLACK_SECTION_TEXT_LIMIT,
   SLACK_ALERT_THRESHOLD,
@@ -13,6 +14,79 @@ import {
 } from "./slack";
 // Imported separately so parallel changes to the list above do not collide.
 import { escapeSlackText } from "./slack";
+
+describe("assertSlackWebhookUrl", () => {
+  it("accepts a valid Slack Incoming Webhook URL", () => {
+    const url = assertSlackWebhookUrl("https://hooks.slack.com/services/T000/B000/XXXX");
+    expect(url.href).toBe("https://hooks.slack.com/services/T000/B000/XXXX");
+  });
+
+  it("trims surrounding whitespace", () => {
+    const url = assertSlackWebhookUrl("  https://hooks.slack.com/services/T000/B000/XXXX  ");
+    expect(url.href).toBe("https://hooks.slack.com/services/T000/B000/XXXX");
+  });
+
+  it("rejects non-string or empty input", () => {
+    expect(() => assertSlackWebhookUrl("")).toThrow("Slack webhook URL is missing.");
+    expect(() => assertSlackWebhookUrl("   ")).toThrow("Slack webhook URL is missing.");
+    expect(() => assertSlackWebhookUrl(null as unknown as string)).toThrow("Slack webhook URL is missing.");
+  });
+
+  it("rejects malformed URL format", () => {
+    expect(() => assertSlackWebhookUrl("not a url")).toThrow("Invalid Slack webhook URL format.");
+  });
+
+  it.each([
+    ["http", "http://hooks.slack.com/services/T000/B000/XXXX"],
+    ["ftp", "ftp://hooks.slack.com/services/T000/B000/XXXX"],
+    ["file", "file:///services/T000/B000/XXXX"],
+  ])("rejects non-HTTPS scheme: %s", (_scheme, raw) => {
+    expect(() => assertSlackWebhookUrl(raw)).toThrow(/only https is allowed/);
+  });
+
+  it.each([
+    ["arbitrary domain", "https://evil.example.com/services/T000/B000/XXXX"],
+    ["subdomain suffix", "https://hooks.slack.com.evil.example/services/T000/B000/XXXX"],
+    ["attacker subdomain", "https://evil.hooks.slack.com/services/T000/B000/XXXX"],
+    ["IPv4 loopback", "https://127.0.0.1/services/T000/B000/XXXX"],
+    ["localhost", "https://localhost/services/T000/B000/XXXX"],
+    ["private 10.0.0.0/8", "https://10.0.0.1/services/T000/B000/XXXX"],
+    ["cloud metadata", "https://169.254.169.254/services/T000/B000/XXXX"],
+    ["IPv6 loopback", "https://[::1]/services/T000/B000/XXXX"],
+    ["IPv6 link-local", "https://[fe80::1]/services/T000/B000/XXXX"],
+  ])("rejects non-slack hostname: %s", (_label, raw) => {
+    expect(() => assertSlackWebhookUrl(raw)).toThrow(/only hooks\.slack\.com is allowed/);
+  });
+
+  it("rejects embedded credentials", () => {
+    expect(() =>
+      assertSlackWebhookUrl("https://user:pass@hooks.slack.com/services/T000/B000/XXXX"),
+    ).toThrow("Slack webhook URL must not embed credentials.");
+  });
+
+  it("rejects custom ports", () => {
+    expect(() =>
+      assertSlackWebhookUrl("https://hooks.slack.com:8080/services/T000/B000/XXXX"),
+    ).toThrow("Slack webhook URL must not specify a custom port.");
+  });
+
+  it.each([
+    ["root path", "https://hooks.slack.com/"],
+    ["non-services path", "https://hooks.slack.com/not-services/T000/B000/XXXX"],
+    ["api endpoint", "https://hooks.slack.com/api/chat.postMessage"],
+  ])("rejects invalid path: %s", (_label, raw) => {
+    expect(() => assertSlackWebhookUrl(raw)).toThrow("Slack webhook URL path must start with /services/.");
+  });
+
+  it.each([
+    ["query string", "https://hooks.slack.com/services/T000/B000/XXXX?token=secret"],
+    ["fragment", "https://hooks.slack.com/services/T000/B000/XXXX#section"],
+  ])("rejects unexpected URL components: %s", (_label, raw) => {
+    expect(() => assertSlackWebhookUrl(raw)).toThrow(
+      "Slack webhook URL must not include query parameters or fragments.",
+    );
+  });
+});
 
 function finding(overrides: Partial<AlertFinding> = {}): AlertFinding {
   return {
@@ -205,6 +279,43 @@ describe("sendSlackAlert", () => {
       sendSlackAlert("https://hooks.slack.com/services/x", { text: "hi", blocks: [] }),
     ).resolves.toBe(false);
   });
+
+  describe("SSRF bypass prevention", () => {
+    it.each([
+      ["IPv4 loopback", "https://127.0.0.1/services/x"],
+      ["localhost", "https://localhost/services/x"],
+      ["private 10.0.0.0/8", "https://10.0.0.1/services/x"],
+      ["cloud metadata", "https://169.254.169.254/services/x"],
+      ["IPv6 loopback", "https://[::1]/services/x"],
+      ["arbitrary public host", "https://evil.example.com/services/x"],
+      ["subdomain suffix", "https://hooks.slack.com.evil.example/services/x"],
+      ["insecure HTTP", "http://hooks.slack.com/services/x"],
+      ["embedded credentials", "https://user:pass@hooks.slack.com/services/x"],
+      ["custom port", "https://hooks.slack.com:8443/services/x"],
+      ["invalid path", "https://hooks.slack.com/api/chat.postMessage"],
+      ["query parameters", "https://hooks.slack.com/services/x?foo=bar"],
+    ])("rejects SSRF destination (%s) and avoids network dispatch", async (_label, url) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const result = await sendSlackAlert(url, { text: "hi", blocks: [] });
+
+      expect(result).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("never logs the secret webhook token on failure", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const secretUrl = "https://hooks.slack.com/services/T12345/B67890/SECRETTOKENVAL123";
+
+      vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("network failure"));
+
+      const result = await sendSlackAlert(secretUrl, { text: "hi", blocks: [] });
+      expect(result).toBe(false);
+
+      const loggedCalls = consoleSpy.mock.calls.flat().map(String).join(" ");
+      expect(loggedCalls).not.toContain("SECRETTOKENVAL123");
+      expect(loggedCalls).not.toContain("T12345/B67890");
+    });
+  });
 });
 
 describe("notifyHighSeverityFindings", () => {
@@ -275,6 +386,18 @@ describe("notifyHighSeverityFindings", () => {
       },
       "CRITICAL",
     );
+
+    expect(sent).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("safely rejects malicious or SSRF URLs without calling fetch", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    const sent = await notifyHighSeverityFindings("http://127.0.0.1:8080/services/x", {
+      repositoryFullName: "acme/widgets",
+      prNumber: 1,
+      findings: [finding({ severity: "CRITICAL" })],
+    });
 
     expect(sent).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
