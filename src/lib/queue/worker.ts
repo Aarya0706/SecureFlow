@@ -3,7 +3,7 @@ import { z } from "zod";
 import { redis } from "./redis";
 import { webhookDLQ, WebhookJobData } from "./webhookQueue";
 import { dlqRetryStateFor } from "./dlq-auto-retry";
-import { acquireLock, releaseLock } from "./lock";
+import { acquireLock, releaseLock, startLockHeartbeat } from "./lock";
 import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
 import { processScanJob, type ScanJobResult } from "@/lib/scanner/scanEngine";
 import type { ScanJobData } from "@/lib/queue/scanQueue";
@@ -342,6 +342,21 @@ export function getCommentableLines(patch: string): Set<number> {
   return commentableLineNumbers(parseUnifiedPatch(patch));
 }
 
+/**
+ * Lease on the per-PR scan lock, renewed by a heartbeat while the scan runs.
+ *
+ * Deliberately short. A scan has no fixed upper bound (each LLM call may take up
+ * to two minutes and is retried), so a flat lease long enough to outlast the
+ * slowest one expires under a slow scan and lets a second job start on the same
+ * PR, and it also keeps a PR blocked for that whole time after a worker crash.
+ * With renewal the lease only has to outlast a missed heartbeat or two.
+ */
+const PR_SCAN_LOCK_TTL_MS = 60_000;
+const PR_SCAN_LOCK_RENEW_MS = 20_000;
+
+/** How long a job that lost the race for a PR waits before trying again. */
+const PR_SCAN_LOCK_RETRY_DELAY_MS = 15_000;
+
 export const worker = new Worker<WebhookJobData>(
   "github-webhooks",
   async (job: Job<WebhookJobData>) => {
@@ -563,12 +578,20 @@ export const worker = new Worker<WebhookJobData>(
         assertPullRequestContext(payload as any);
 
           const lockKey = `pr-scan:${repository.full_name}:${pull_request.number}`;
-          const lockToken = await acquireLock(lockKey, 300000); // 5 minutes lock
+          const lockToken = await acquireLock(lockKey, PR_SCAN_LOCK_TTL_MS);
           if (!lockToken) {
             console.warn(`[Worker] PR #${pull_request.number} on ${repository.full_name} is currently locked by a concurrent scan. Delaying job...`);
-            await job.moveToDelayed(Date.now() + 15000, job.token);
+            await job.moveToDelayed(Date.now() + PR_SCAN_LOCK_RETRY_DELAY_MS, job.token);
             throw new DelayedError();
           }
+
+          // Keep the lease alive for as long as the scan actually runs.
+          const lockHeartbeat = startLockHeartbeat(
+            lockKey,
+            lockToken,
+            PR_SCAN_LOCK_TTL_MS,
+            PR_SCAN_LOCK_RENEW_MS,
+          );
 
           try {
 
@@ -1087,6 +1110,9 @@ export const worker = new Worker<WebhookJobData>(
           }
         }
           } finally {
+            // Stop renewing before releasing, so a late renewal cannot run after
+            // the lock has been handed on.
+            lockHeartbeat.stop();
             await releaseLock(lockKey, lockToken);
           }
       }
