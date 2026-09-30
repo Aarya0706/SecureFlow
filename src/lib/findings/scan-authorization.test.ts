@@ -37,8 +37,28 @@ describe("scanRequestSchema", () => {
 
     expect(parsed.data.fileChanges).toEqual([]);
     expect(parsed.data.activePolicies).toEqual([]);
-    expect(parsed.data.customIgnores).toEqual([]);
-    expect(parsed.data.customPlaceholders).toEqual([]);
+  });
+
+  it("drops customIgnores, so a caller cannot suppress scanning files", () => {
+    const parsed = scanRequestSchema.safeParse({
+      ...validBody,
+      customIgnores: ["src/**", "*.ts"],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).not.toHaveProperty("customIgnores");
+  });
+
+  it("drops customPlaceholders, so a caller cannot mask secrets", () => {
+    const parsed = scanRequestSchema.safeParse({
+      ...validBody,
+      customPlaceholders: ["SUPPRESS_ME"],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).not.toHaveProperty("customPlaceholders");
   });
 
   it("drops userId, so a caller cannot choose the audit-log actor", () => {
@@ -136,12 +156,10 @@ describe("buildScanJobData", () => {
     expect(data.userId).toBe("user-1");
   });
 
-  it("carries the scan parameters through unchanged", () => {
+  it("carries the scan parameters through and defaults ignores/placeholders to empty", () => {
     const parsed = scanRequestSchema.parse({
       ...validBody,
       fileChanges: [{ filename: "a.ts", patch: "@@" }],
-      customIgnores: ["docs/**"],
-      customPlaceholders: ["REPLACE_ME"],
       activePolicies: [{ description: "No hardcoded secrets", severity: "HIGH" }],
     });
 
@@ -151,9 +169,22 @@ describe("buildScanJobData", () => {
     expect(data.headSha).toBe("a".repeat(40));
     expect(data.installationId).toBe(12345678);
     expect(data.fileChanges).toEqual([{ filename: "a.ts", patch: "@@" }]);
-    expect(data.customIgnores).toEqual(["docs/**"]);
-    expect(data.customPlaceholders).toEqual(["REPLACE_ME"]);
+    expect(data.customIgnores).toEqual([]);
+    expect(data.customPlaceholders).toEqual([]);
     expect(data.activePolicies).toHaveLength(1);
+  });
+
+  it("does not accept client-supplied customIgnores or customPlaceholders in body", () => {
+    const parsed = scanRequestSchema.parse({
+      ...validBody,
+      customIgnores: ["src/**"],
+      customPlaceholders: ["IGNORE_KEY"],
+    } as never);
+
+    const data = buildScanJobData({ body: parsed, repository, userId: "user-1" });
+
+    expect(data.customIgnores).toEqual([]);
+    expect(data.customPlaceholders).toEqual([]);
   });
 
   it("leaves scanJobId for enqueueScan to fill in", () => {

@@ -70,11 +70,14 @@ export async function loadOwnedRepository(
 /**
  * The accepted body of a scan request.
  *
- * Two fields are gone from the previous schema and their absence is the point:
+ * Fields that were removed from the schema to prevent client-side security bypasses:
  *
  *  - `userId`, because the actor is the session, never a request field;
  *  - `repositoryFullName`, because it is `Repository.fullName` and taking it
- *    from the body is what let a caller aim the GitHub App somewhere else.
+ *    from the body is what let a caller aim the GitHub App somewhere else;
+ *  - `customIgnores` and `customPlaceholders`, because ignore patterns and
+ *    placeholders must be governed by repository configuration (.secureflowignore)
+ *    rather than untrusted request parameters (#2).
  *
  * `installationId` is still accepted — `Repository` carries no installation id
  * to derive it from — but it can no longer be used to reach another account's
@@ -96,8 +99,6 @@ export const scanRequestSchema = z.object({
     )
     .default([]),
   activePolicies: z.array(z.object({ description: z.string() }).passthrough()).default([]),
-  customIgnores: z.array(z.string()).default([]),
-  customPlaceholders: z.array(z.string()).default([]),
 });
 
 export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
@@ -108,13 +109,17 @@ export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
  * `repositoryId`, `repositoryFullName` and `userId` are taken from the
  * authorisation result, never from `body` — the parameter order here is the
  * safeguard, since `body` cannot supply any of the three.
+ * Ignore patterns and placeholders are initialized empty and loaded from repository
+ * configuration (.secureflowignore) by the scan engine.
  */
 export function buildScanJobData(args: {
   body: ScanRequestBody;
   repository: OwnedRepository;
   userId: string;
+  customIgnores?: string[];
+  customPlaceholders?: string[];
 }): ScanJobData {
-  const { body, repository, userId } = args;
+  const { body, repository, userId, customIgnores = [], customPlaceholders = [] } = args;
 
   return {
     // Replaced by `enqueueScan`, which creates the row this refers to.
@@ -126,8 +131,8 @@ export function buildScanJobData(args: {
     headSha: body.headSha,
     fileChanges: body.fileChanges,
     activePolicies: body.activePolicies,
-    customIgnores: body.customIgnores,
-    customPlaceholders: body.customPlaceholders,
+    customIgnores,
+    customPlaceholders,
     userId,
   };
 }
