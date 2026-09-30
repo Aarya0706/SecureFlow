@@ -299,7 +299,8 @@ config:
   outboundWebhookAllowInsecureHttp: false
   outboundWebhookAllowPrivateNetworks: false
   dbPoolMax: 10
-
+   
+  llmCacheTtlSeconds: 86400
 # ----------------------------------------------------------------------------
 # Sensitive Secrets Configuration
 # ----------------------------------------------------------------------------

@@ -5,10 +5,9 @@ import {
   getAiInstance,
   getDefaultModelRef,
   ai,
-  securityExplanationModel,
   getSecurityExplanationModelChain,
 } from "@/ai/genkit";
-import { executeWithFallbackAndRetry } from "../resilience";
+
 import {
   AISecurityExplanationApiSchema,
   AISecurityExplanationInputSchema,
@@ -17,6 +16,12 @@ import {
   type AISecurityExplanationInput,
   type AISecurityExplanationOutput,
 } from "./security-explanation-schemas";
+import {
+  createExplanationCacheKey,
+  getCachedExplanation,
+  getModelId,
+  setCachedExplanation,
+} from "@/lib/explanation-cache";
 
 interface StreamOptions {
   vulnerabilityId: string;
@@ -128,6 +133,18 @@ export async function* streamDeveloperSecurityExplanations(
 
   try {
     const modelChain = getSecurityExplanationModelChain();
+    const cacheKey = createExplanationCacheKey({
+      ...validatedInput,
+      model: getModelId(modelChain[0]),
+    });
+
+    const cached = await getCachedExplanation(cacheKey);
+    if (cached) {
+      if (signal?.aborted) return;
+      yield { type: "chunk", explanation: cached.explanation };
+      yield { type: "done", result: cached };
+      return;
+    }
     let streamResult: {
       iterator: AsyncIterator<any>;
       first: IteratorResult<any>;
@@ -196,6 +213,7 @@ export async function* streamDeveloperSecurityExplanations(
 
     const finalResponse = await response;
     let parsedContent: Partial<AISecurityExplanationOutput> = {};
+    let usedParseFallback = false;
 
     if (finalResponse.output) {
       parsedContent = finalResponse.output as AISecurityExplanationOutput;
@@ -212,6 +230,8 @@ export async function* streamDeveloperSecurityExplanations(
       } catch (error) {
         console.error("Failed to parse stream explanation JSON:", error);
         console.error("RAW STREAM OUTPUT WAS:\n", finalResponse.text);
+
+        usedParseFallback = true;
 
         parsedContent = {
           explanation: "Signal lost. The Professor is recalculating.",
@@ -231,6 +251,13 @@ export async function* streamDeveloperSecurityExplanations(
         parsedContent.remediationSuggestions || "No remediation suggestions provided.",
       promptInjectionSuspected: injectionPreFilterFlagged || consistencyFlagged,
     });
+
+    // Only cache real answers from the primary model. Never the "Signal lost"
+    // placeholder, and never a fallback model's output, which would otherwise
+    // be served for the full TTL. Fire-and-forget: the helper swallows its own errors.
+    if (!usedParseFallback && activeModel === modelChain[0]) {
+      void setCachedExplanation(cacheKey, result);
+    }
 
     // The final, fully-validated explanation is always the authoritative text, even if it
     // differs slightly from the last streamed partial (e.g. the partial JSON parser dropped a
