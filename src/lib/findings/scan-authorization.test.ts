@@ -1,10 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   buildScanJobData,
+  loadActivePoliciesForUser,
   loadOwnedRepository,
   loadScanJobOwnership,
   scanJobVisibility,
   scanRequestSchema,
+  type PolicyStore,
   type RepositoryStore,
   type ScanJobOwnershipStore,
 } from "./scan-authorization";
@@ -36,9 +38,19 @@ describe("scanRequestSchema", () => {
     if (!parsed.success) return;
 
     expect(parsed.data.fileChanges).toEqual([]);
-    expect(parsed.data.activePolicies).toEqual([]);
     expect(parsed.data.customIgnores).toEqual([]);
     expect(parsed.data.customPlaceholders).toEqual([]);
+  });
+
+  it("drops activePolicies, so a caller cannot control security policies", () => {
+    const parsed = scanRequestSchema.safeParse({
+      ...validBody,
+      activePolicies: [{ description: "Bypass rule", severity: "LOW" }],
+    });
+
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) return;
+    expect(parsed.data).not.toHaveProperty("activePolicies");
   });
 
   it("drops userId, so a caller cannot choose the audit-log actor", () => {
@@ -113,6 +125,57 @@ describe("loadOwnedRepository", () => {
   });
 });
 
+describe("loadActivePoliciesForUser", () => {
+  function policyStore(
+    templates: Array<{ id: string; description: string; isDefault: boolean }>,
+    toggles: Array<{ policyTemplateId: string; isActive: boolean }>,
+  ): PolicyStore {
+    return {
+      policyTemplate: { findMany: vi.fn().mockResolvedValue(templates) },
+      userPolicyToggle: { findMany: vi.fn().mockResolvedValue(toggles) },
+    };
+  }
+
+  it("returns an empty array when userId is empty", async () => {
+    const store = policyStore([{ id: "tpl-1", description: "Default rule", isDefault: true }], []);
+
+    const result = await loadActivePoliciesForUser(store, "");
+    expect(result).toEqual([]);
+    expect(store.policyTemplate.findMany).not.toHaveBeenCalled();
+  });
+
+  it("uses template default status when user has no explicit toggles", async () => {
+    const templates = [
+      { id: "tpl-1", description: "Default ON rule", isDefault: true },
+      { id: "tpl-2", description: "Default OFF rule", isDefault: false },
+    ];
+    const store = policyStore(templates, []);
+
+    const result = await loadActivePoliciesForUser(store, "user-1");
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("tpl-1");
+    expect(store.userPolicyToggle.findMany).toHaveBeenCalledWith({
+      where: { userId: "user-1" },
+    });
+  });
+
+  it("respects user toggle overrides", async () => {
+    const templates = [
+      { id: "tpl-1", description: "Default ON rule, toggled OFF", isDefault: true },
+      { id: "tpl-2", description: "Default OFF rule, toggled ON", isDefault: false },
+    ];
+    const toggles = [
+      { policyTemplateId: "tpl-1", isActive: false },
+      { policyTemplateId: "tpl-2", isActive: true },
+    ];
+    const store = policyStore(templates, toggles);
+
+    const result = await loadActivePoliciesForUser(store, "user-1");
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("tpl-2");
+  });
+});
+
 describe("buildScanJobData", () => {
   const repository = { id: "repo-1", fullName: "me/mine" };
 
@@ -142,7 +205,6 @@ describe("buildScanJobData", () => {
       fileChanges: [{ filename: "a.ts", patch: "@@" }],
       customIgnores: ["docs/**"],
       customPlaceholders: ["REPLACE_ME"],
-      activePolicies: [{ description: "No hardcoded secrets", severity: "HIGH" }],
     });
 
     const data = buildScanJobData({ body: parsed, repository, userId: "user-1" });
@@ -153,7 +215,32 @@ describe("buildScanJobData", () => {
     expect(data.fileChanges).toEqual([{ filename: "a.ts", patch: "@@" }]);
     expect(data.customIgnores).toEqual(["docs/**"]);
     expect(data.customPlaceholders).toEqual(["REPLACE_ME"]);
-    expect(data.activePolicies).toHaveLength(1);
+  });
+
+  it("uses server-derived activePolicies rather than trusting body", () => {
+    const parsed = scanRequestSchema.parse(validBody);
+    const serverPolicies = [
+      { description: "Server enforced SQL injection rule", severity: "HIGH" },
+    ];
+
+    const data = buildScanJobData({
+      body: parsed,
+      repository,
+      userId: "user-1",
+      activePolicies: serverPolicies,
+    });
+
+    expect(data.activePolicies).toEqual(serverPolicies);
+  });
+
+  it("defaults activePolicies to empty array when omitted", () => {
+    const data = buildScanJobData({
+      body: scanRequestSchema.parse(validBody),
+      repository,
+      userId: "user-1",
+    });
+
+    expect(data.activePolicies).toEqual([]);
   });
 
   it("leaves scanJobId for enqueueScan to fill in", () => {
