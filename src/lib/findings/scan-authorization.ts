@@ -47,6 +47,28 @@ export interface RepositoryStore {
   }) => Promise<OwnedRepository | null>;
 }
 
+/** The Prisma surface `loadActivePoliciesForUser` uses. */
+export interface PolicyStore {
+  policyTemplate: {
+    findMany: (args?: unknown) => Promise<
+      Array<{
+        id: string;
+        description: string;
+        isDefault: boolean;
+        [key: string]: unknown;
+      }>
+    >;
+  };
+  userPolicyToggle: {
+    findMany: (args: { where: { userId: string } }) => Promise<
+      Array<{
+        policyTemplateId: string;
+        isActive: boolean;
+      }>
+    >;
+  };
+}
+
 /**
  * The repository, if this user owns it.
  *
@@ -68,6 +90,32 @@ export async function loadOwnedRepository(
 }
 
 /**
+ * Load active policies configured in the database for the user (#1).
+ *
+ * Scans evaluate code against policies defined in `PolicyTemplate` rows,
+ * taking into account any toggles the user has explicitly set via `UserPolicyToggle`.
+ *
+ * The request body cannot supply or override active policies.
+ */
+export async function loadActivePoliciesForUser(
+  store: PolicyStore,
+  userId: string,
+): Promise<Array<{ description: string; [key: string]: unknown }>> {
+  if (!userId) return [];
+
+  const templates = await store.policyTemplate.findMany();
+  const userToggles = await store.userPolicyToggle.findMany({
+    where: { userId },
+  });
+
+  const toggleMap = new Map(userToggles.map((t) => [t.policyTemplateId, t.isActive]));
+
+  return templates.filter((template) => {
+    return toggleMap.has(template.id) ? toggleMap.get(template.id) : template.isDefault;
+  });
+}
+
+/**
  * The accepted body of a scan request.
  *
  * Fields that were removed from the schema to prevent client-side security bypasses:
@@ -78,6 +126,9 @@ export async function loadOwnedRepository(
  *  - `customIgnores` and `customPlaceholders`, because ignore patterns and
  *    placeholders must be governed by repository configuration (.secureflowignore)
  *    rather than untrusted request parameters (#2).
+ *  - `activePolicies`, because policy rules are derived server-side from
+ *    database templates and user toggles, so a client cannot disable or alter
+ *    security policies by sending an empty or modified array (#1).
  *
  * `installationId` is still accepted — `Repository` carries no installation id
  * to derive it from — but it can no longer be used to reach another account's
@@ -98,17 +149,15 @@ export const scanRequestSchema = z.object({
       }),
     )
     .default([]),
-  activePolicies: z.array(z.object({ description: z.string() }).passthrough()).default([]),
 });
 
 export type ScanRequestBody = z.infer<typeof scanRequestSchema>;
 
 /**
- * Assemble the queue payload from the request and the authorised repository.
+ * Assemble the queue payload from the request, authorised repository, and server policies.
  *
- * `repositoryId`, `repositoryFullName` and `userId` are taken from the
- * authorisation result, never from `body` — the parameter order here is the
- * safeguard, since `body` cannot supply any of the three.
+ * `repositoryId`, `repositoryFullName`, `userId`, and `activePolicies` are taken from
+ * server-side authorization and database state, never from `body`.
  * Ignore patterns and placeholders are initialized empty and loaded from repository
  * configuration (.secureflowignore) by the scan engine.
  */
@@ -118,8 +167,9 @@ export function buildScanJobData(args: {
   userId: string;
   customIgnores?: string[];
   customPlaceholders?: string[];
+  activePolicies?: Array<{ description: string; [key: string]: unknown }>;
 }): ScanJobData {
-  const { body, repository, userId, customIgnores = [], customPlaceholders = [] } = args;
+  const { body, repository, userId, customIgnores = [], customPlaceholders = [], activePolicies = [] } = args;
 
   return {
     // Replaced by `enqueueScan`, which creates the row this refers to.
@@ -130,7 +180,7 @@ export function buildScanJobData(args: {
     prNumber: body.prNumber,
     headSha: body.headSha,
     fileChanges: body.fileChanges,
-    activePolicies: body.activePolicies,
+    activePolicies,
     customIgnores,
     customPlaceholders,
     userId,
