@@ -29,7 +29,9 @@ describe("assertSlackWebhookUrl", () => {
   it("rejects non-string or empty input", () => {
     expect(() => assertSlackWebhookUrl("")).toThrow("Slack webhook URL is missing.");
     expect(() => assertSlackWebhookUrl("   ")).toThrow("Slack webhook URL is missing.");
-    expect(() => assertSlackWebhookUrl(null as unknown as string)).toThrow("Slack webhook URL is missing.");
+    expect(() => assertSlackWebhookUrl(null as unknown as string)).toThrow(
+      "Slack webhook URL is missing.",
+    );
   });
 
   it("rejects malformed URL format", () => {
@@ -75,7 +77,9 @@ describe("assertSlackWebhookUrl", () => {
     ["non-services path", "https://hooks.slack.com/not-services/T000/B000/XXXX"],
     ["api endpoint", "https://hooks.slack.com/api/chat.postMessage"],
   ])("rejects invalid path: %s", (_label, raw) => {
-    expect(() => assertSlackWebhookUrl(raw)).toThrow("Slack webhook URL path must start with /services/.");
+    expect(() => assertSlackWebhookUrl(raw)).toThrow(
+      "Slack webhook URL path must start with /services/.",
+    );
   });
 
   it.each([

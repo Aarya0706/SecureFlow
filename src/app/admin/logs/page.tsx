@@ -12,10 +12,10 @@ export const metadata = {
 const INITIAL_PAGE_SIZE = 200;
 
 export default async function AdminLogsPage({
-    searchParams,
-  }: {
-    searchParams: Promise<{ page?: string }>;
-  }) {
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   const params = await searchParams;
   const currentPage = Math.max(1, Number(params.page) || 1);
   const [result, metrics, filters] = await Promise.all([
@@ -53,7 +53,7 @@ export default async function AdminLogsPage({
         logs={result.logs}
         actions={filters.actions}
         total={result.total}
-        page={currentpage}
+        page={currentPage}
         pageSize={INITIAL_PAGE_SIZE}
       />
 

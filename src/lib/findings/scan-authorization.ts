@@ -169,7 +169,14 @@ export function buildScanJobData(args: {
   customPlaceholders?: string[];
   activePolicies?: Array<{ description: string; [key: string]: unknown }>;
 }): ScanJobData {
-  const { body, repository, userId, customIgnores = [], customPlaceholders = [], activePolicies = [] } = args;
+  const {
+    body,
+    repository,
+    userId,
+    customIgnores = [],
+    customPlaceholders = [],
+    activePolicies = [],
+  } = args;
 
   return {
     // Replaced by `enqueueScan`, which creates the row this refers to.

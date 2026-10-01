@@ -263,7 +263,7 @@ describe("buildScanJobData", () => {
       ...validBody,
       customIgnores: ["src/**"],
       customPlaceholders: ["IGNORE_KEY"],
-      activePolicies: [{ description: "Client rule" }]
+      activePolicies: [{ description: "Client rule" }],
     } as never);
 
     const data = buildScanJobData({ body: parsed, repository, userId: "user-1" });

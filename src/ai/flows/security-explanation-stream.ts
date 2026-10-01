@@ -40,14 +40,16 @@ export interface StreamOptions {
  * Aggregates token usage metrics across multiple streaming generations or batches.
  * Sums input, output, and total tokens.
  */
-export function aggregateTokenUsage(
-  usages: Array<TokenUsage | null | undefined>,
-): { inputTokens: number; outputTokens: number; totalTokens: number } {
+export function aggregateTokenUsage(usages: Array<TokenUsage | null | undefined>): {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+} {
   return usages.reduce(
     (acc, usage) => {
       const input = usage?.inputTokens ?? 0;
       const output = usage?.outputTokens ?? 0;
-      const total = usage?.totalTokens ?? (input + output);
+      const total = usage?.totalTokens ?? input + output;
       return {
         inputTokens: acc.inputTokens + input,
         outputTokens: acc.outputTokens + output,
@@ -115,7 +117,7 @@ Provide a concise explanation, architectural impact, and immediate remediation s
     if (finalResponse?.usage) {
       const inputTokens = finalResponse.usage.inputTokens ?? 0;
       const outputTokens = finalResponse.usage.outputTokens ?? 0;
-      const totalTokens = finalResponse.usage.totalTokens ?? (inputTokens + outputTokens);
+      const totalTokens = finalResponse.usage.totalTokens ?? inputTokens + outputTokens;
       usage = { inputTokens, outputTokens, totalTokens };
       if (onUsage) {
         onUsage(usage);
@@ -311,8 +313,7 @@ export async function* streamDeveloperSecurityExplanations(
     if (finalResponse?.usage) {
       const inputTokens = finalResponse.usage.inputTokens ?? 0;
       const outputTokens = finalResponse.usage.outputTokens ?? 0;
-      const totalTokens =
-        finalResponse.usage.totalTokens ?? (inputTokens + outputTokens);
+      const totalTokens = finalResponse.usage.totalTokens ?? inputTokens + outputTokens;
       tokenUsage = { inputTokens, outputTokens, totalTokens };
     }
 

@@ -22,7 +22,16 @@ vi.mock("@/lib/queue/redis", () => ({
 
 // Prevent local-model.ts from executing its top-level network pings
 // which otherwise cause an infinite retry loop during module initialization.
+// Mock both the relative and absolute alias paths to ensure Vitest successfully
+// intercepts the import regardless of how genkit.ts specifies it.
 vi.mock("./local-model", () => ({
+  resolveLocalModelConfig: vi.fn(() => null),
+  isLocalModelEnabled: false,
+  createLocalAiInstance: vi.fn(),
+  localModelRef: vi.fn(),
+}));
+
+vi.mock("@/ai/local-model", () => ({
   resolveLocalModelConfig: vi.fn(() => null),
   isLocalModelEnabled: false,
   createLocalAiInstance: vi.fn(),
