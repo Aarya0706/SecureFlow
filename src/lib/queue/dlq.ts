@@ -44,8 +44,6 @@ class WebhookDeadLetterQueue {
       payload: { repository: "Janvi-kapoor/SecureFlow", ref: "refs/heads/main" },
       error: "Signature verification timeout or handler exception",
       attempts: 3,
-      lastFailedAt: new Date().toISOString(),
-      status: "failed",
     });
   }
 

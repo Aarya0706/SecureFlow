@@ -400,17 +400,13 @@ export function getThreatFeedPayloads(): ThreatFeedPayload[] {
   return loadThreatFeedPayloads();
 }
 
-/**
- * Returns a combined, deduplicated dataset containing both static regression
- * payloads and dynamically updated external threat feed payloads.
- */
 export function getAllRedTeamPayloads(): InjectionPayload[] {
   const feedPayloads = getThreatFeedPayloads();
   const combined = normalizeAndDeduplicatePayloads([
     ...INJECTION_PAYLOADS,
     ...ALL_INJECTION_PAYLOADS,
     ...feedPayloads,
-  ]);
+  ] as any[]) as InjectionPayload[];
   return combined;
 }
 
