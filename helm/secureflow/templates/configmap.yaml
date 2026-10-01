@@ -28,4 +28,5 @@ data:
   OUTBOUND_WEBHOOK_ALLOW_INSECURE_HTTP: {{ .Values.config.outboundWebhookAllowInsecureHttp | quote }}
   OUTBOUND_WEBHOOK_ALLOW_PRIVATE_NETWORKS: {{ .Values.config.outboundWebhookAllowPrivateNetworks | quote }}
   DB_POOL_MAX: {{ .Values.config.dbPoolMax | quote }}
+  LLM_CACHE_TTL_SECONDS: {{ .Values.config.llmCacheTtlSeconds | quote }}
   SCAN_WORKER_CONCURRENCY: {{ .Values.worker.concurrency | quote }}

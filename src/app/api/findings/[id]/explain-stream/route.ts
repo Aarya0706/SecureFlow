@@ -6,11 +6,6 @@ import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
 import { checkRateLimit } from "@/lib/redis";
 import { ratelimit } from "@/lib/rate-limit";
 import { streamManager } from "@/lib/sse/streamManager";
-import {
-  createExplanationCacheKey,
-  getCachedExplanation,
-  setCachedExplanation,
-} from "@/lib/explanation-cache";
 import { scrubSensitiveData } from "@/lib/redaction";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +19,9 @@ export const dynamic = "force-dynamic";
  * (`{"type":"chunk",...}`, `{"type":"done",...}`, or `{"type":"error",...}`), so the client can
  * render the explanation as it arrives instead of waiting for the full response - this is the
  * whole point of the endpoint (cut perceived latency for the AI explanation UI).
+ *
+ * Response caching (Redis) lives inside streamDeveloperSecurityExplanations, so a cache hit is
+ * replayed through the same chunk/done events and this handler needs no cache logic of its own.
  *
  * Ownership is checked the same way the findings dashboard page checks it: the finding must
  * belong to a scan result, on a pull request, on a repository owned by the signed-in user.
@@ -99,51 +97,8 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
     );
   }
 
-  // Declared before the cache check: both the cached and the live stream encode SSE frames.
+  // Used to encode the SSE frames of the live stream.
   const encoder = new TextEncoder();
-
-  const cacheKey = createExplanationCacheKey({
-    findingType: finding.type,
-    severity: finding.severity,
-    fileLocation: finding.fileLocation,
-    codeSnippet: finding.codeSnippet || "",
-  });
-
-  const cachedExplanation = await getCachedExplanation(cacheKey);
-  if (cachedExplanation) {
-    const cachedStream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "chunk",
-              explanation: cachedExplanation.explanation,
-            })}\n\n`,
-          ),
-        );
-
-        controller.enqueue(
-          encoder.encode(
-            `data: ${JSON.stringify({
-              type: "done",
-              result: cachedExplanation,
-            })}\n\n`,
-          ),
-        );
-
-        controller.close();
-      },
-    });
-
-    return new Response(cachedStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-        "X-Accel-Buffering": "no",
-      },
-    });
-  }
 
   const { signal: abortSignal, release } = streamManager.register(request.signal, "explain-stream");
 
@@ -205,7 +160,6 @@ async function handler(request: NextRequest, { params }: { params: Promise<{ id:
           send(event);
 
           if (event.type === "done") {
-            await setCachedExplanation(cacheKey, event.result);
             // Persist the refreshed explanation so a page reload (or the batch webhook view)
             // reflects the same text the user just watched stream in, rather than going stale.
             try {

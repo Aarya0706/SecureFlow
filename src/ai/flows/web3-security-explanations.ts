@@ -24,6 +24,12 @@ import {
 } from "./security-explanation-schemas";
 import { __internal, isRateLimitError, isTimeoutError, withRetry } from "./security-helpers";
 import { getAiInstance, getDefaultModelRef } from "@/ai/genkit";
+import {
+  createExplanationCacheKey,
+  getCachedExplanation,
+  getModelId,
+  setCachedExplanation,
+} from "@/lib/explanation-cache";
 
 const { contradictsSeverity, detectPromptInjection } = __internal;
 
@@ -237,11 +243,35 @@ const ECOSYSTEM_PROMPT_BUILDERS: Record<
  * checks as the base `developerReceivesAISecurityExplanations` flow.
  *
  * Falls back to the generic Web3 prompt when the ecosystem cannot be inferred.
+ *
+ * Results are cached (keyed on finding, model and prompt version). Fallback
+ * text produced on errors is never cached.
  */
 export async function web3SecurityExplanation(
   input: AISecurityExplanationInput,
 ): Promise<AISecurityExplanationOutput> {
   const validatedInput = AISecurityExplanationInputSchema.parse(input);
+
+  const activeAi = getAiInstance();
+  const activeModel = getDefaultModelRef();
+
+  // Cache lookup: key includes model and prompt version, same as the generic flow.
+  const cacheKey = createExplanationCacheKey({
+    findingType: validatedInput.findingType,
+    severity: validatedInput.severity,
+    fileLocation: validatedInput.fileLocation,
+    codeSnippet: validatedInput.codeSnippet,
+    description: validatedInput.description,
+    model: getModelId(activeModel),
+  });
+
+  const cached = await getCachedExplanation(cacheKey);
+  if (cached) {
+    return AISecurityExplanationOutputSchema.parse(cached);
+  }
+
+  // Only real, parseable model output is cached, never the fallback messages below.
+  let cacheable = false;
 
   const injectionFlagged =
     detectPromptInjection(validatedInput.codeSnippet) ||
@@ -250,9 +280,6 @@ export async function web3SecurityExplanation(
   const ecosystem = detectWeb3Ecosystem(validatedInput.fileLocation, validatedInput.findingType);
   const systemPrompt = ECOSYSTEM_SYSTEM_PROMPTS[ecosystem];
   const prompt = ECOSYSTEM_PROMPT_BUILDERS[ecosystem](validatedInput);
-
-  const activeAi = getAiInstance();
-  const activeModel = getDefaultModelRef();
 
   let parsedContent: { explanation?: string; remediationSuggestions?: string } | undefined;
 
@@ -275,6 +302,7 @@ export async function web3SecurityExplanation(
     if (jsonMatch) {
       try {
         parsedContent = JSON.parse(jsonMatch[0]);
+        cacheable = true;
       } catch {
         // fall through to fallback below
       }
@@ -298,10 +326,16 @@ export async function web3SecurityExplanation(
   const explanation = parsedContent?.explanation ?? "No explanation provided.";
   const consistencyFlagged = contradictsSeverity(validatedInput.severity, explanation);
 
-  return AISecurityExplanationOutputSchema.parse({
+  const output = AISecurityExplanationOutputSchema.parse({
     explanation,
     remediationSuggestions:
       parsedContent?.remediationSuggestions ?? "No remediation suggestions provided.",
     promptInjectionSuspected: injectionFlagged || consistencyFlagged,
   });
+
+  if (cacheable && parsedContent?.explanation) {
+    await setCachedExplanation(cacheKey, output);
+  }
+
+  return output;
 }

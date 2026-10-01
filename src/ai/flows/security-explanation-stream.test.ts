@@ -22,6 +22,18 @@ vi.mock("../../database/vulnerabilityDb", () => ({
 
 vi.mock("dotenv/config", () => ({}));
 
+const { mockGetCached, mockSetCached } = vi.hoisted(() => ({
+  mockGetCached: vi.fn(),
+  mockSetCached: vi.fn(),
+}));
+
+vi.mock("@/lib/explanation-cache", () => ({
+  createExplanationCacheKey: vi.fn(() => "test-key"),
+  getCachedExplanation: mockGetCached,
+  setCachedExplanation: mockSetCached,
+  getModelId: vi.fn((model: unknown) => String(model)),
+}));
+
 import { getAiInstance, getDefaultModelRef, getSecurityExplanationModelChain } from "@/ai/genkit";
 import { getVulnerabilityMetadata } from "../../database/vulnerabilityDb";
 import {
@@ -488,6 +500,80 @@ describe("streamDeveloperSecurityExplanations — provider failures", () => {
 
     expect(mockGenerateStream).toHaveBeenCalledTimes(1);
     expect(events).toEqual([{ type: "error", message: "invalid api key" }]);
+  });
+});
+
+describe("streamDeveloperSecurityExplanations — caching", () => {
+  beforeEach(() => {
+    vi.mocked(getSecurityExplanationModelChain).mockReturnValue(["primary-model"]);
+    mockGetCached.mockResolvedValue(null);
+    mockSetCached.mockResolvedValue(undefined);
+  });
+
+  it("replays a cached explanation as chunk + done without calling the model", async () => {
+    const cached = {
+      explanation: "Cached explanation.",
+      remediationSuggestions: "Cached fix.",
+      promptInjectionSuspected: false,
+    };
+    mockGetCached.mockResolvedValue(cached);
+
+    const events = await collect(streamDeveloperSecurityExplanations(input));
+
+    expect(events).toEqual([
+      { type: "chunk", explanation: "Cached explanation." },
+      { type: "done", result: cached },
+    ]);
+    expect(mockGenerateStream).not.toHaveBeenCalled();
+    expect(mockSetCached).not.toHaveBeenCalled();
+  });
+
+  it("stores a freshly generated result on a cache miss", async () => {
+    mockGenerateStream.mockImplementation(() =>
+      genkitStream([{ explanation: "Fresh" }], {
+        output: { explanation: "Fresh explanation.", remediationSuggestions: "Fix it." },
+      }),
+    );
+
+    await collect(streamDeveloperSecurityExplanations(input));
+
+    expect(mockSetCached).toHaveBeenCalledWith("test-key", {
+      explanation: "Fresh explanation.",
+      remediationSuggestions: "Fix it.",
+      promptInjectionSuspected: false,
+    });
+  });
+
+  it("does not cache the 'Signal lost' placeholder", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGenerateStream.mockImplementation(() =>
+      genkitStream([], { output: null, text: "no json here" }),
+    );
+
+    await collect(streamDeveloperSecurityExplanations(input));
+
+    expect(mockSetCached).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+
+  it("does not cache output from a fallback model", async () => {
+    vi.mocked(getSecurityExplanationModelChain).mockReturnValue([
+      "primary-model",
+      "fallback-model",
+    ]);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mockGenerateStream.mockImplementation(({ model }: { model: string }) =>
+      model === "primary-model"
+        ? failingGenkitStream(rateLimitError())
+        : genkitStream([], {
+            output: { explanation: "From fallback", remediationSuggestions: "Fix" },
+          }),
+    );
+
+    await collect(streamDeveloperSecurityExplanations(input));
+
+    expect(mockSetCached).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
   });
 });
 
