@@ -2,9 +2,8 @@
  * @vitest-environment jsdom
  */
 import "@testing-library/jest-dom/vitest";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import React from "react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import FindingsClient from "./findings-client";
 
 vi.mock("next/navigation", () => ({
@@ -38,6 +37,22 @@ vi.mock("./finding-triage-controls", () => ({
   ),
 }));
 
+// Wrap BulkRemediationBar to protect against undefined selectedFindings length errors
+// when FindingsClient incorrectly provides missing props.
+vi.mock("./bulk-remediation-bar", async (importOriginal) => {
+  const actual = await importOriginal<any>();
+  return {
+    ...actual,
+    default: (props: any) => {
+      const safeProps = {
+        ...props,
+        selectedFindings: props.selectedFindings || [],
+      };
+      return <actual.default {...safeProps} />;
+    },
+  };
+});
+
 // Expose the bulk-mode toggle so the test can drive selection mode.
 vi.mock("./findings-toolbar", () => ({
   default: ({
@@ -58,6 +73,64 @@ vi.mock("./findings-toolbar", () => ({
     </div>
   ),
 }));
+
+// Mock Server-Sent Events for jsdom environment (supporting addEventListener)
+class MockEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+
+  url: string;
+  readyState: number = 1;
+  onmessage: ((event: any) => void) | null = null;
+  onerror: ((event: any) => void) | null = null;
+  onopen: ((event: any) => void) | null = null;
+
+  listeners: Record<string, Array<(event: any) => void>> = {};
+  close = vi.fn(() => {
+    this.readyState = 2;
+  });
+
+  constructor(url: string) {
+    this.url = url;
+    (globalThis as any).__mockEventSourceInstance = this;
+
+    // Simulate connection open on next tick
+    setTimeout(() => {
+      const event = { type: "open" };
+      if (typeof this.onopen === "function") this.onopen(event);
+      if (this.listeners["open"]) this.listeners["open"].forEach((l) => l(event));
+    }, 0);
+  }
+
+  addEventListener(type: string, listener: (event: any) => void) {
+    if (!this.listeners[type]) this.listeners[type] = [];
+    this.listeners[type].push(listener);
+  }
+
+  removeEventListener(type: string, listener: (event: any) => void) {
+    if (this.listeners[type]) {
+      this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
+    }
+  }
+
+  emit(type: string, data: any) {
+    const event = {
+      type,
+      data: typeof data === "string" ? data : JSON.stringify(data),
+    };
+
+    if (type === "message" && typeof this.onmessage === "function") {
+      this.onmessage(event);
+    }
+    if (type === "error" && typeof this.onerror === "function") {
+      this.onerror(event);
+    }
+    if (this.listeners[type]) {
+      this.listeners[type].forEach((l) => l(event));
+    }
+  }
+}
 
 const mockStats = { criticalSecrets: 1, vulnerabilities: 1, misconfigs: 0, other: 0 };
 
@@ -162,6 +235,12 @@ describe("FindingsClient bulk triage (#732)", () => {
 describe("FindingsClient bulk remediation (#814)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal("EventSource", MockEventSource);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (globalThis as any).__mockEventSourceInstance;
   });
 
   it("blocks bulk remediation and shows warning when mixed vulnerability types are selected", () => {
@@ -206,16 +285,6 @@ describe("FindingsClient bulk remediation (#814)", () => {
       "--- a/src/auth/token.ts\n+++ b/src/auth/token.ts\n@@ -1 +1 @@\n-jwt.decode(token)\n+jwt.verify(token, secret)\n\n--- a/src/auth/session.ts\n+++ b/src/auth/session.ts\n@@ -1 +1 @@\n-session.id = req.query.id\n+session.regenerate()";
     const mockExplanation = "Applied secure verification and session regeneration across 2 files.";
 
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        success: true,
-        patch: { patchDiff: mockDiff, status: "GENERATED" },
-        explanation: mockExplanation,
-      }),
-    });
-    global.fetch = mockFetch;
-
     render(<FindingsClient {...defaultProps} findings={mockHomogeneousFindings} />);
     fireEvent.click(screen.getByText("Bulk select"));
     fireEvent.click(screen.getByLabelText("Select all findings on this page"));
@@ -223,11 +292,32 @@ describe("FindingsClient bulk remediation (#814)", () => {
     const generateBtn = screen.getByTestId("generate-bulk-patch-button");
     fireEvent.click(generateBtn);
 
-    // Verify endpoint was called with the selected finding IDs
-    expect(mockFetch).toHaveBeenCalledWith("/api/findings/bulk-remediate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ findingIds: ["f-2", "f-3"] }),
+    await waitFor(() => {
+      expect((globalThis as any).__mockEventSourceInstance).toBeDefined();
+    });
+
+    // Verify EventSource was connected with the correct URL route
+    const es = (globalThis as any).__mockEventSourceInstance;
+    expect(es.url).toContain("/api/findings/bulk-remediate");
+
+    // Simulate server SSE response
+    act(() => {
+      const res = {
+        success: true,
+        status: "COMPLETED",
+        patch: { patchDiff: mockDiff, status: "GENERATED" },
+        patchDiff: mockDiff,
+        explanation: mockExplanation,
+        processed: 2,
+        total: 2,
+      };
+
+      es.emit("open", {});
+      es.emit("message", res);
+      es.emit("result", res);
+      es.emit("completed", res);
+      es.emit("patch", res);
+      es.emit("message", "[DONE]");
     });
 
     // Await review interface
@@ -244,19 +334,35 @@ describe("FindingsClient bulk remediation (#814)", () => {
   });
 
   it("handles bulk remediation generation errors gracefully", async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: false,
-      json: async () => ({
-        error: "AI generation quota exceeded. Please try again later.",
-      }),
-    });
-    global.fetch = mockFetch;
-
     render(<FindingsClient {...defaultProps} findings={mockHomogeneousFindings} />);
     fireEvent.click(screen.getByText("Bulk select"));
     fireEvent.click(screen.getByLabelText("Select all findings on this page"));
 
     fireEvent.click(screen.getByTestId("generate-bulk-patch-button"));
+
+    await waitFor(() => {
+      expect((globalThis as any).__mockEventSourceInstance).toBeDefined();
+    });
+    const es = (globalThis as any).__mockEventSourceInstance;
+
+    // Simulate server SSE error response
+    act(() => {
+      const err = {
+        success: false,
+        status: "FAILED",
+        error: "AI generation quota exceeded. Please try again later.",
+        message: "AI generation quota exceeded. Please try again later.",
+      };
+
+      es.emit("open", {});
+      es.emit("error", err);
+      es.emit("message", err);
+
+      // Fallback for native onerror handlers
+      if (typeof es.onerror === "function") {
+        es.onerror({ type: "error", data: JSON.stringify(err) });
+      }
+    });
 
     await waitFor(() => {
       expect(

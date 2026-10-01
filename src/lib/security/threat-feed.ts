@@ -200,11 +200,7 @@ export function categorizeThreatPayload(
   }
 
   // Instruction override
-  if (
-    /ignore|disregard|forget|override|bypass|maintenance mode|new instruction/i.test(
-      lower,
-    )
-  ) {
+  if (/ignore|disregard|forget|override|bypass|maintenance mode|new instruction/i.test(lower)) {
     return "instruction-override";
   }
 
@@ -234,8 +230,7 @@ export function normalizeAndDeduplicatePayloads(
 
     const category = item.category || categorizeThreatPayload(trimmed);
     const id =
-      item.id ||
-      `${sourcePrefix}-${category.slice(0, 4)}-${String(counter++).padStart(3, "0")}`;
+      item.id || `${sourcePrefix}-${category.slice(0, 4)}-${String(counter++).padStart(3, "0")}`;
 
     results.push({
       id,
@@ -281,11 +276,7 @@ export function parseFeedContent(
             extracted.push({ payload: entry });
           } else if (typeof entry === "object" && entry !== null) {
             const payload =
-              entry.payload ||
-              entry.prompt ||
-              entry.jailbreak ||
-              entry.text ||
-              entry.attack;
+              entry.payload || entry.prompt || entry.jailbreak || entry.text || entry.attack;
             if (typeof payload === "string") {
               extracted.push({
                 payload,
@@ -394,9 +385,7 @@ export function loadThreatFeedDataset(filePath = DEFAULT_FEED_PATH): ThreatFeedD
 /**
  * Load payloads directly for test and runtime execution.
  */
-export function loadThreatFeedPayloads(options?: {
-  customPath?: string;
-}): ThreatFeedPayload[] {
+export function loadThreatFeedPayloads(options?: { customPath?: string }): ThreatFeedPayload[] {
   const dataset = loadThreatFeedDataset(options?.customPath);
   return dataset.payloads || [];
 }
@@ -443,19 +432,14 @@ export async function syncThreatFeeds(options?: {
     }
   }
 
-  const combinedPayloads = normalizeAndDeduplicatePayloads([
-    ...existingPayloads,
-    ...newPayloads,
-  ]);
+  const combinedPayloads = normalizeAndDeduplicatePayloads([...existingPayloads, ...newPayloads]);
 
   const categoryCounts: Record<string, number> = {};
   for (const item of combinedPayloads) {
     categoryCounts[item.category] = (categoryCounts[item.category] || 0) + 1;
   }
 
-  const allSources = [
-    ...new Set([...existingDataset.sources, ...sourcesSynced]),
-  ];
+  const allSources = [...new Set([...existingDataset.sources, ...sourcesSynced])];
 
   const updatedDataset: ThreatFeedDataset = {
     version: existingDataset.version || "1.0.0",
@@ -475,7 +459,9 @@ export async function syncThreatFeeds(options?: {
     }
     fs.writeFileSync(outputPath, JSON.stringify(updatedDataset, null, 2), "utf-8");
   } catch (err) {
-    errors.push(`Failed to write dataset to ${outputPath}: ${err instanceof Error ? err.message : String(err)}`);
+    errors.push(
+      `Failed to write dataset to ${outputPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   return {

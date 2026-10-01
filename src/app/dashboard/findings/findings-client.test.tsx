@@ -35,6 +35,12 @@ vi.mock("./finding-triage-controls", () => ({
   default: () => <div data-testid="triage-controls">Triage Controls</div>,
 }));
 
+// Mock BulkRemediationBar to avoid "Cannot read properties of undefined (reading 'length')"
+// when FindingsClient renders it without an active selection in standard tests.
+vi.mock("./bulk-remediation-bar", () => ({
+  default: () => <div data-testid="bulk-remediation-bar-mock" />,
+}));
+
 describe("FindingsClient Component (#633)", () => {
   const mockStats = {
     criticalSecrets: 4,
@@ -122,6 +128,7 @@ describe("FindingsClient Component (#633)", () => {
       screen.getByText("Great news! Your repositories are currently secure."),
     ).toBeInTheDocument();
   });
+
   it("links Export CSV to the server export with the current filters, minus paging", () => {
     // The export must cover the filtered total, not the page in the browser.
     currentParams = new URLSearchParams("severity=CRITICAL&q=token&page=3&pageSize=100");

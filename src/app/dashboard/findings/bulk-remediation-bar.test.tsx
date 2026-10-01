@@ -3,14 +3,71 @@
  */
 import "@testing-library/jest-dom/vitest";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import React from "react";
+import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import BulkRemediationBar from "./bulk-remediation-bar";
 import type { FindingRow } from "@/lib/actions/findings";
 
 vi.mock("@/hooks/use-toast", () => ({
   useToast: () => ({ toast: vi.fn(), toasts: [], dismiss: vi.fn() }),
 }));
+
+// Mock Server-Sent Events for jsdom environment (supporting addEventListener)
+class MockEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+
+  url: string;
+  readyState: number = 1;
+  onmessage: ((event: any) => void) | null = null;
+  onerror: ((event: any) => void) | null = null;
+  onopen: ((event: any) => void) | null = null;
+
+  listeners: Record<string, Array<(event: any) => void>> = {};
+  close = vi.fn(() => {
+    this.readyState = 2;
+  });
+
+  constructor(url: string) {
+    this.url = url;
+    (globalThis as any).__mockEventSourceInstance = this;
+
+    // Simulate connection open on next tick
+    setTimeout(() => {
+      const event = { type: "open" };
+      if (typeof this.onopen === "function") this.onopen(event);
+      if (this.listeners["open"]) this.listeners["open"].forEach((l) => l(event));
+    }, 0);
+  }
+
+  addEventListener(type: string, listener: (event: any) => void) {
+    if (!this.listeners[type]) this.listeners[type] = [];
+    this.listeners[type].push(listener);
+  }
+
+  removeEventListener(type: string, listener: (event: any) => void) {
+    if (this.listeners[type]) {
+      this.listeners[type] = this.listeners[type].filter((l) => l !== listener);
+    }
+  }
+
+  emit(type: string, data: any) {
+    const event = {
+      type,
+      data: typeof data === "string" ? data : JSON.stringify(data),
+    };
+
+    if (type === "message" && typeof this.onmessage === "function") {
+      this.onmessage(event);
+    }
+    if (type === "error" && typeof this.onerror === "function") {
+      this.onerror(event);
+    }
+    if (this.listeners[type]) {
+      this.listeners[type].forEach((l) => l(event));
+    }
+  }
+}
 
 function finding(id: string, fileLocation: string): FindingRow {
   return {
@@ -34,37 +91,47 @@ function finding(id: string, fileLocation: string): FindingRow {
   } as FindingRow;
 }
 
-function patchResponse(patchDiff: string) {
-  return new Response(
-    JSON.stringify({
-      success: true,
-      patch: { patchDiff, status: "GENERATED" },
-      explanation: "explanation",
-    }),
-    { status: 200 },
-  );
-}
-
 const first = [finding("f-1", "src/a.ts"), finding("f-2", "src/b.ts")];
 const second = [finding("f-3", "src/c.ts")];
 
 describe("BulkRemediationBar", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", MockEventSource);
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    delete (globalThis as any).__mockEventSourceInstance;
   });
 
   it("does not keep showing a patch generated for a different selection", async () => {
-    fetchMock.mockResolvedValue(patchResponse("+++ b/src/a.ts"));
     const { rerender } = render(<BulkRemediationBar selectedFindings={first} />);
 
     fireEvent.click(screen.getByTestId("generate-bulk-patch-button"));
+
+    await waitFor(() => {
+      expect((globalThis as any).__mockEventSourceInstance).toBeDefined();
+    });
+    const es = (globalThis as any).__mockEventSourceInstance;
+
+    act(() => {
+      const res = {
+        success: true,
+        status: "GENERATED",
+        patch: { patchDiff: "+++ b/src/a.ts", status: "GENERATED" },
+        patchDiff: "+++ b/src/a.ts",
+        explanation: "explanation",
+        processed: 2,
+        total: 2,
+      };
+      es.emit("open", {});
+      es.emit("message", res);
+      es.emit("result", res);
+      es.emit("completed", res);
+      es.emit("patch", res);
+      es.emit("message", "[DONE]");
+    });
+
     await screen.findByTestId("bulk-patch-review");
 
     rerender(<BulkRemediationBar selectedFindings={second} />);
@@ -75,13 +142,35 @@ describe("BulkRemediationBar", () => {
   });
 
   it("does not show a patch that arrives after the selection changed", async () => {
-    let resolve!: (res: Response) => void;
-    fetchMock.mockReturnValue(new Promise<Response>((r) => (resolve = r)));
     const { rerender } = render(<BulkRemediationBar selectedFindings={first} />);
 
     fireEvent.click(screen.getByTestId("generate-bulk-patch-button"));
+
+    await waitFor(() => {
+      expect((globalThis as any).__mockEventSourceInstance).toBeDefined();
+    });
+    const es = (globalThis as any).__mockEventSourceInstance;
+
     rerender(<BulkRemediationBar selectedFindings={second} />);
-    resolve(patchResponse("+++ b/src/a.ts"));
+
+    // Arrives after selection changed
+    act(() => {
+      const res = {
+        success: true,
+        status: "GENERATED",
+        patch: { patchDiff: "+++ b/src/a.ts", status: "GENERATED" },
+        patchDiff: "+++ b/src/a.ts",
+        explanation: "explanation",
+        processed: 2,
+        total: 2,
+      };
+      es.emit("open", {});
+      es.emit("message", res);
+      es.emit("result", res);
+      es.emit("completed", res);
+      es.emit("patch", res);
+      es.emit("message", "[DONE]");
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("generate-bulk-patch-button")).not.toBeDisabled();
@@ -90,10 +179,33 @@ describe("BulkRemediationBar", () => {
   });
 
   it("keeps the patch while the selection is unchanged", async () => {
-    fetchMock.mockResolvedValue(patchResponse("+++ b/src/a.ts"));
     const { rerender } = render(<BulkRemediationBar selectedFindings={first} />);
 
     fireEvent.click(screen.getByTestId("generate-bulk-patch-button"));
+
+    await waitFor(() => {
+      expect((globalThis as any).__mockEventSourceInstance).toBeDefined();
+    });
+    const es = (globalThis as any).__mockEventSourceInstance;
+
+    act(() => {
+      const res = {
+        success: true,
+        status: "GENERATED",
+        patch: { patchDiff: "+++ b/src/a.ts", status: "GENERATED" },
+        patchDiff: "+++ b/src/a.ts",
+        explanation: "explanation",
+        processed: 2,
+        total: 2,
+      };
+      es.emit("open", {});
+      es.emit("message", res);
+      es.emit("result", res);
+      es.emit("completed", res);
+      es.emit("patch", res);
+      es.emit("message", "[DONE]");
+    });
+
     await screen.findByTestId("bulk-patch-review");
 
     // A new array with the same findings, as the parent's useMemo produces.
