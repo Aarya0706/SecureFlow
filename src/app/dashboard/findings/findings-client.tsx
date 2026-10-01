@@ -1,5 +1,6 @@
 "use client";
 
+import { BulkRemediationBar } from '@/components/bulk-remediation-bar';
 import { useMemo, useState } from "react";
 import CountUp from "react-countup";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +101,7 @@ export default function FindingsClient({
 
   return (
     <div className="space-y-8 w-full animate-in fade-in duration-700">
+
       <div>
         <span className="text-sm font-medium uppercase tracking-widest text-primary">
           Security Center
@@ -149,6 +151,9 @@ export default function FindingsClient({
           <SbomReportCard result={sbomReport} />
         </div>
       )}
+      <div className="mb-6">
+        <BulkRemediationBar totalFindings={total || 50} />
+      </div>
 
       <FindingsToolbar
         options={filterOptions}
