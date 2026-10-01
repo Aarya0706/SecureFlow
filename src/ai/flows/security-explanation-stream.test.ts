@@ -37,9 +37,11 @@ vi.mock("@/lib/explanation-cache", () => ({
 import { getAiInstance, getDefaultModelRef, getSecurityExplanationModelChain } from "@/ai/genkit";
 import { getVulnerabilityMetadata } from "../../database/vulnerabilityDb";
 import {
+  aggregateTokenUsage,
   streamDeveloperSecurityExplanations,
   streamSecurityExplanation,
   type StreamExplanationEvent,
+  type TokenUsage,
 } from "./security-explanation-stream";
 
 // ---------------------------------------------------------------------------
@@ -500,6 +502,7 @@ describe("streamDeveloperSecurityExplanations — provider failures", () => {
     expect(events).toEqual([{ type: "error", message: "invalid api key" }]);
   });
 });
+
 describe("streamDeveloperSecurityExplanations — caching", () => {
   beforeEach(() => {
     vi.mocked(getSecurityExplanationModelChain).mockReturnValue(["primary-model"]);
@@ -571,5 +574,117 @@ describe("streamDeveloperSecurityExplanations — caching", () => {
 
     expect(mockSetCached).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token Usage Tracking & Aggregation
+// ---------------------------------------------------------------------------
+
+describe("aggregateTokenUsage", () => {
+  it("aggregates multiple complete token usage metrics", () => {
+    const usages: TokenUsage[] = [
+      { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      { inputTokens: 200, outputTokens: 80, totalTokens: 280 },
+      { inputTokens: 50, outputTokens: 25, totalTokens: 75 },
+    ];
+
+    const result = aggregateTokenUsage(usages);
+    expect(result).toEqual({
+      inputTokens: 350,
+      outputTokens: 155,
+      totalTokens: 505,
+    });
+  });
+
+  it("handles missing totalTokens by computing sum of input and output", () => {
+    const usages: TokenUsage[] = [
+      { inputTokens: 120, outputTokens: 40 },
+      { inputTokens: 80, outputTokens: 30 },
+    ];
+
+    const result = aggregateTokenUsage(usages);
+    expect(result).toEqual({
+      inputTokens: 200,
+      outputTokens: 70,
+      totalTokens: 270,
+    });
+  });
+
+  it("handles empty arrays, undefined, and null entries gracefully", () => {
+    expect(aggregateTokenUsage([])).toEqual({
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+    });
+
+    expect(aggregateTokenUsage([null, undefined, { inputTokens: 50 }])).toEqual({
+      inputTokens: 50,
+      outputTokens: 0,
+      totalTokens: 50,
+    });
+  });
+});
+
+describe("streamSecurityExplanation — token usage tracking", () => {
+  it("captures token usage from Genkit response and invokes onUsage callback", async () => {
+    const mockUsage = { inputTokens: 250, outputTokens: 75, totalTokens: 325 };
+    mockGenerateStream.mockResolvedValue({
+      stream: makeAsyncIterable(["Analysis chunk"]),
+      response: Promise.resolve({ output: null, text: "", usage: mockUsage }),
+    });
+
+    let reportedUsage: TokenUsage | undefined;
+    const usageResult = await streamSecurityExplanation({
+      vulnerabilityId: "CVE-2024-001",
+      sourceCode: "eval(input);",
+      onChunk: () => {},
+      onUsage: (u) => {
+        reportedUsage = u;
+      },
+    });
+
+    expect(reportedUsage).toEqual(mockUsage);
+    expect(usageResult).toEqual(mockUsage);
+  });
+});
+
+describe("streamDeveloperSecurityExplanations — token usage tracking", () => {
+  beforeEach(() => {
+    vi.mocked(getSecurityExplanationModelChain).mockReturnValue(["primary-model"]);
+  });
+
+  it("includes token usage in the done event when returned by Genkit model", async () => {
+    mockGenerateStream.mockImplementation(() => ({
+      stream: {
+        [Symbol.asyncIterator]: async function* () {
+          yield { output: { explanation: "Explanation text" } };
+        },
+      },
+      response: Promise.resolve({
+        output: {
+          explanation: "Explanation text",
+          remediationSuggestions: "Remediation text",
+        },
+        usage: { inputTokens: 400, outputTokens: 120, totalTokens: 520 },
+      }),
+    }));
+
+    const events = await collect(streamDeveloperSecurityExplanations(input));
+
+    const doneEvent = events.find((e) => e.type === "done");
+    expect(doneEvent).toBeDefined();
+    expect(doneEvent).toMatchObject({
+      type: "done",
+      result: {
+        explanation: "Explanation text",
+        remediationSuggestions: "Remediation text",
+      },
+      usage: {
+        inputTokens: 400,
+        outputTokens: 120,
+        totalTokens: 520,
+      },
+    });
   });
 });

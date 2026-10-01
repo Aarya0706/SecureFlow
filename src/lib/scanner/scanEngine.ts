@@ -9,7 +9,7 @@
  *   const result = await processScanJob(jobData, onProgress);
  */
 
-import { scanner } from "@/lib/armor/scanner";
+import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
 import { iq } from "@/lib/armor/iq";
 import { computeFingerprint } from "@/lib/armor/fingerprint";
 import { developerReceivesAISecurityExplanations } from "@/ai/flows/developer-receives-ai-security-explanations";
@@ -157,8 +157,8 @@ export async function processScanJob(
     headSha,
     fileChanges: initialFileChanges,
     activePolicies,
-    customIgnores,
-    customPlaceholders,
+    customIgnores: initialCustomIgnores,
+    customPlaceholders: initialCustomPlaceholders,
     userId,
   } = data;
 
@@ -178,6 +178,31 @@ export async function processScanJob(
   // Narrowed rather than asserted: `installationId` is `number | string` because
   // the route accepts either and BullMQ round-trips job data through JSON.
   const octokit = await appClient.getInstallationOctokit(parseInstallationId(installationId));
+
+  let customIgnores = initialCustomIgnores ?? [];
+  let customPlaceholders = initialCustomPlaceholders ?? [];
+
+  // If not provided (e.g. from /api/findings where client ignores are stripped),
+  // load legitimate repository-level ignores from .secureflowignore at headSha (#2)
+  if (customIgnores.length === 0 && customPlaceholders.length === 0) {
+    try {
+      const { owner, repo } = splitRepositoryFullName(repositoryFullName);
+      const { data: ignoreFile } = await (octokit as any).rest.repos.getContent({
+        owner,
+        repo,
+        path: ".secureflowignore",
+        ref: headSha,
+      });
+      if (ignoreFile && "content" in ignoreFile && typeof ignoreFile.content === "string") {
+        const content = Buffer.from(ignoreFile.content, "base64").toString("utf8");
+        const parsed = parseSecureFlowIgnore(content);
+        customIgnores = parsed.ignoredPaths;
+        customPlaceholders = parsed.placeholders;
+      }
+    } catch {
+      // .secureflowignore is optional; continue if not found
+    }
+  }
 
   // If no file changes provided, fetch from GitHub
   let fileChanges = initialFileChanges;

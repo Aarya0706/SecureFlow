@@ -23,10 +23,39 @@ import {
   setCachedExplanation,
 } from "@/lib/explanation-cache";
 
-interface StreamOptions {
+export interface TokenUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface StreamOptions {
   vulnerabilityId: string;
   sourceCode: string;
   onChunk: (text: string) => void;
+  onUsage?: (usage: TokenUsage) => void;
+}
+
+/**
+ * Aggregates token usage metrics across multiple streaming generations or batches.
+ * Sums input, output, and total tokens.
+ */
+export function aggregateTokenUsage(
+  usages: Array<TokenUsage | null | undefined>,
+): { inputTokens: number; outputTokens: number; totalTokens: number } {
+  return usages.reduce(
+    (acc, usage) => {
+      const input = usage?.inputTokens ?? 0;
+      const output = usage?.outputTokens ?? 0;
+      const total = usage?.totalTokens ?? (input + output);
+      return {
+        inputTokens: acc.inputTokens + input,
+        outputTokens: acc.outputTokens + output,
+        totalTokens: acc.totalTokens + total,
+      };
+    },
+    { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+  );
 }
 
 /**
@@ -44,7 +73,8 @@ export async function streamSecurityExplanation({
   vulnerabilityId,
   sourceCode,
   onChunk,
-}: StreamOptions): Promise<void> {
+  onUsage,
+}: StreamOptions): Promise<TokenUsage | undefined> {
   try {
     const metadataPromise = getVulnerabilityMetadata(vulnerabilityId);
 
@@ -63,7 +93,7 @@ Provide a concise explanation, architectural impact, and immediate remediation s
     const activeAi = getAiInstance();
     const activeModel = getDefaultModelRef();
 
-    const { stream } = await activeAi.generateStream({
+    const { stream, response } = await activeAi.generateStream({
       model: activeModel as any,
       system: systemPrompt,
       prompt: contextualPrompt,
@@ -79,6 +109,20 @@ Provide a concise explanation, architectural impact, and immediate remediation s
         onChunk(textChunk);
       }
     }
+
+    const finalResponse = await response;
+    let usage: TokenUsage | undefined;
+    if (finalResponse?.usage) {
+      const inputTokens = finalResponse.usage.inputTokens ?? 0;
+      const outputTokens = finalResponse.usage.outputTokens ?? 0;
+      const totalTokens = finalResponse.usage.totalTokens ?? (inputTokens + outputTokens);
+      usage = { inputTokens, outputTokens, totalTokens };
+      if (onUsage) {
+        onUsage(usage);
+      }
+    }
+
+    return usage;
   } catch (error) {
     console.error("[AI_STREAM_ERROR] Critical failure in streaming pipeline:", error);
     throw new Error("Streaming pipeline encountered an internal execution fault.");
@@ -90,7 +134,11 @@ const { detectPromptInjection, contradictsSeverity, buildPrompt } = __internal;
 /** Streamed while the explanation text is still arriving (typewriter-style UI). */
 export type StreamExplanationChunkEvent = { type: "chunk"; explanation: string };
 /** Emitted once, after the full response has arrived and all safety checks have run. */
-export type StreamExplanationDoneEvent = { type: "done"; result: AISecurityExplanationOutput };
+export type StreamExplanationDoneEvent = {
+  type: "done";
+  result: AISecurityExplanationOutput;
+  usage?: TokenUsage;
+};
 /** Emitted if generation fails partway through; the caller should fall back gracefully. */
 export type StreamExplanationErrorEvent = { type: "error"; message: string };
 export type StreamExplanationEvent =
@@ -259,10 +307,23 @@ export async function* streamDeveloperSecurityExplanations(
       void setCachedExplanation(cacheKey, result);
     }
 
+    let tokenUsage: TokenUsage | undefined;
+    if (finalResponse?.usage) {
+      const inputTokens = finalResponse.usage.inputTokens ?? 0;
+      const outputTokens = finalResponse.usage.outputTokens ?? 0;
+      const totalTokens =
+        finalResponse.usage.totalTokens ?? (inputTokens + outputTokens);
+      tokenUsage = { inputTokens, outputTokens, totalTokens };
+    }
+
     // The final, fully-validated explanation is always the authoritative text, even if it
     // differs slightly from the last streamed partial (e.g. the partial JSON parser dropped a
     // trailing fragment) - callers should render `result.explanation` once `done` arrives.
-    yield { type: "done", result };
+    yield {
+      type: "done",
+      result,
+      ...(tokenUsage ? { usage: tokenUsage } : {}),
+    };
   } catch (err) {
     const isRateLimit = isRateLimitError(err);
     const isTimeout = isTimeoutError(err);

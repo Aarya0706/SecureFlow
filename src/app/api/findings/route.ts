@@ -24,6 +24,7 @@ import { withRateLimit } from "@/lib/middleware/rate-limit";
 import { enqueueScan } from "@/lib/queue/scanQueue";
 import {
   buildScanJobData,
+  loadActivePoliciesForUser,
   loadOwnedRepository,
   scanRequestSchema,
 } from "@/lib/findings/scan-authorization";
@@ -67,8 +68,11 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
     throw new AppError("Repository not found", 404);
   }
 
+  // Derive effective active policies from trusted database state (#1)
+  const activePolicies = await loadActivePoliciesForUser(prisma as never, userId);
+
   const { jobId, scanJobId } = await enqueueScan(
-    buildScanJobData({ body: parsed.data, repository, userId }),
+    buildScanJobData({ body: parsed.data, repository, userId, activePolicies }),
   );
 
   return NextResponse.json(

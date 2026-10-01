@@ -6,10 +6,18 @@ const mocks = vi.hoisted(() => ({
   createComment: vi.fn(),
   updateScanJobProgress: vi.fn(),
   explain: vi.fn(),
+  getContent: vi.fn(),
 }));
 
 vi.mock("@/lib/armor/scanner", () => ({
   scanner: { scanPullRequest: mocks.scanPullRequest },
+  parseSecureFlowIgnore: (content: string) => ({
+    ignoredPaths: content
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    placeholders: [],
+  }),
 }));
 vi.mock("@/lib/armor/iq", () => ({
   iq: {
@@ -36,6 +44,7 @@ vi.mock("octokit", () => ({
         rest: {
           checks: { create: mocks.checksCreate },
           issues: { createComment: mocks.createComment },
+          repos: { getContent: mocks.getContent },
         },
       };
     }
@@ -112,6 +121,34 @@ describe("processScanJob chunk failures", () => {
     expect(result).toMatchObject({ scannedFiles: 12, vulnerabilitiesFound: 0, verdict: "PASS" });
     expect(mocks.checksCreate).toHaveBeenCalledWith(
       expect.objectContaining({ conclusion: "success", head_sha: "abc123" }),
+    );
+  });
+
+  it("fetches .secureflowignore from repository at headSha when customIgnores is empty", async () => {
+    mocks.getContent.mockResolvedValueOnce({
+      data: {
+        content: Buffer.from("docs/**\ntests/**").toString("base64"),
+      },
+    });
+    mocks.scanPullRequest.mockResolvedValue([]);
+
+    await processScanJob({ ...jobData, customIgnores: [], customPlaceholders: [] }, undefined, {
+      report: false,
+      persist: false,
+      enrich: false,
+    });
+
+    expect(mocks.getContent).toHaveBeenCalledWith({
+      owner: "acme",
+      repo: "api",
+      path: ".secureflowignore",
+      ref: "abc123",
+    });
+    expect(mocks.scanPullRequest).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Array),
+      ["docs/**", "tests/**"],
+      [],
     );
   });
 });
