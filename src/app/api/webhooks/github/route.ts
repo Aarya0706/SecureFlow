@@ -4,7 +4,6 @@ import { addWebhookJob } from "@/lib/queue/webhookQueue";
 export const maxDuration = 60; // optionally increase timeout if not already set
 
 import { withErrorHandler, AppError } from "@/lib/middleware/error-handler";
-import { withRateLimit, TIERS } from "@/lib/middleware/rate-limit";
 import {
   isPayloadTooLarge,
   isTrackedEvent,
@@ -178,7 +177,4 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   return NextResponse.json({ status: "queued", deliveryId }, { status: 202 });
 });
 
-export const POST = withRateLimit(handler, {
-  ...TIERS.WEBHOOK,
-  keyPrefix: "webhook:github",
-});
+export const POST = handler;
