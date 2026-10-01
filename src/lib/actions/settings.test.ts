@@ -53,7 +53,7 @@ describe("updateSlackWebhook", () => {
   });
 
   it("rejects a value that is not a URL without writing anything", async () => {
-    await expect(updateSlackWebhook("not a url")).rejects.toThrow("Invalid URL format");
+    await expect(updateSlackWebhook("not a url")).rejects.toThrow("Invalid Slack webhook URL format.");
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });
@@ -66,6 +66,66 @@ describe("updateSlackWebhook", () => {
       data: { slackWebhookUrl: WEBHOOK },
     });
     expect(mockRevalidatePath).toHaveBeenCalledWith("/dashboard/settings");
+  });
+
+  describe("SSRF security policy enforcement", () => {
+    it.each([
+      ["http scheme", "http://hooks.slack.com/services/T000/B000/XXXX"],
+      ["ftp scheme", "ftp://hooks.slack.com/services/T000/B000/XXXX"],
+      ["gopher scheme", "gopher://hooks.slack.com/services/T000/B000/XXXX"],
+    ])("rejects invalid scheme: %s", async (_label, url) => {
+      await expect(updateSlackWebhook(url)).rejects.toThrow();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["IPv4 loopback http", "http://127.0.0.1/"],
+      ["IPv4 loopback https", "https://127.0.0.1/"],
+      ["localhost http", "http://localhost/"],
+      ["localhost https", "https://localhost/"],
+      ["private 10.0.0.0/8", "https://10.0.0.1/"],
+      ["private 172.16.0.0/12", "https://172.16.0.1/"],
+      ["private 192.168.0.0/16", "https://192.168.1.1/"],
+      ["cloud metadata 169.254.169.254", "https://169.254.169.254/"],
+      ["IPv6 loopback", "https://[::1]/"],
+      ["IPv6 link-local", "https://[fe80::1]/"],
+    ])("rejects internal destination: %s", async (_label, url) => {
+      await expect(updateSlackWebhook(url)).rejects.toThrow();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["arbitrary domain", "https://evil.example.com/services/T000/B000/XXXX"],
+      ["subdomain suffix attack", "https://hooks.slack.com.evil.example/services/T000/B000/XXXX"],
+      ["attacker subdomain on slack", "https://evil.hooks.slack.com/services/T000/B000/XXXX"],
+    ])("rejects arbitrary public host: %s", async (_label, url) => {
+      await expect(updateSlackWebhook(url)).rejects.toThrow();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["embedded credentials", "https://user:pass@hooks.slack.com/services/T000/B000/XXXX"],
+      ["custom port", "https://hooks.slack.com:8080/services/T000/B000/XXXX"],
+      ["query string", "https://hooks.slack.com/services/T000/B000/XXXX?query=1"],
+      ["fragment", "https://hooks.slack.com/services/T000/B000/XXXX#fragment"],
+    ])("rejects URL authority and parameter attacks: %s", async (_label, url) => {
+      await expect(updateSlackWebhook(url)).rejects.toThrow();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["root path", "https://hooks.slack.com/"],
+      ["non-services path", "https://hooks.slack.com/not-services/T000/B000/XXXX"],
+      ["api path", "https://hooks.slack.com/api/chat.postMessage"],
+    ])("rejects invalid Slack path: %s", async (_label, url) => {
+      await expect(updateSlackWebhook(url)).rejects.toThrow();
+      expect(mockUpdate).not.toHaveBeenCalled();
+      expect(mockRevalidatePath).not.toHaveBeenCalled();
+    });
   });
 
   it.each([

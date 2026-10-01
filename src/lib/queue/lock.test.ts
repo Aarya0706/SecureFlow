@@ -10,7 +10,8 @@ const set = vi.mocked(redis.set);
 const evalScript = vi.mocked(redis.eval);
 
 /** Renewal calls only; `eval` is also used by release. */
-const renewals = () => evalScript.mock.calls.filter(([script]) => /pexpire/.test(String(script)));
+const renewals = () =>
+  evalScript.mock.calls.filter((call: unknown[]) => /pexpire/.test(String(call[0])));
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
