@@ -141,9 +141,6 @@ export function requeueOptionsFor(payload: WebhookJobData | null | undefined): {
   replaceFailed?: boolean;
 } {
   const deliveryId = deliveryIdOf(payload);
-  return deliveryId ? { jobId: webhookJobId(deliveryId), replaceFailed: true } : {};
-}
-  const deliveryId = deliveryIdOf(payload);
   // The failed original still holds this id in the main queue; see
   // `AddWebhookJobOptions.replaceFailed`.
   return deliveryId ? { jobId: webhookJobId(deliveryId), replaceFailed: true } : {};
