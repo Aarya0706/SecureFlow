@@ -130,7 +130,9 @@ describe("startLockHeartbeat", () => {
 
   it("does not report a lost lock when stopped while a renewal is in flight", async () => {
     let finishRenewal: (value: number) => void = () => {};
-    evalScript.mockImplementation(() => new Promise<number>((resolve) => (finishRenewal = resolve)));
+    evalScript.mockImplementation(
+      () => new Promise<number>((resolve) => (finishRenewal = resolve)),
+    );
     const onLost = vi.fn();
     const heartbeat = startLockHeartbeat("k", "tok", 300, 10, onLost);
 

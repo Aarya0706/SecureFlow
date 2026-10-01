@@ -53,7 +53,9 @@ describe("updateSlackWebhook", () => {
   });
 
   it("rejects a value that is not a URL without writing anything", async () => {
-    await expect(updateSlackWebhook("not a url")).rejects.toThrow("Invalid Slack webhook URL format.");
+    await expect(updateSlackWebhook("not a url")).rejects.toThrow(
+      "Invalid Slack webhook URL format.",
+    );
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockRevalidatePath).not.toHaveBeenCalled();
   });

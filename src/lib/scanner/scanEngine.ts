@@ -209,10 +209,7 @@ export async function processScanJob(
     );
   }
 
-  const customIgnores = [
-    ...(initialCustomIgnores ?? []),
-    ...repositoryIgnoreConfig.ignoredPaths,
-  ];
+  const customIgnores = [...(initialCustomIgnores ?? []), ...repositoryIgnoreConfig.ignoredPaths];
   const customPlaceholders = [
     ...(initialCustomPlaceholders ?? []),
     ...repositoryIgnoreConfig.placeholders,
