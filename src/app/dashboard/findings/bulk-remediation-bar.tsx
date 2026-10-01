@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Loader2, Wrench, X, Info } from "lucide-react";
+import { AlertTriangle, Wrench, X, Info } from "lucide-react";
 import { PatchDiffViewer } from "@/components/findings/patch-diff-viewer";
 import { useToast } from "@/hooks/use-toast";
 import type { FindingRow } from "@/lib/actions/findings";
@@ -16,30 +16,56 @@ export interface BulkRemediationBarProps {
 interface PatchResponseData {
   patchDiff: string;
   explanation: string;
-  /** The selection the patch was generated for; see `selectionKey`. */
   selectionKey: string;
 }
 
-export default function BulkRemediationBar({
+export function BulkRemediationBar({
   selectedFindings,
   onClearSelection,
 }: BulkRemediationBarProps) {
   const { toast } = useToast();
-  const [loading, setLoading] = useState(false);
+
+  // Merged state for SSE progress and patching
+  const [status, setStatus] = useState<"idle" | "processing" | "completed" | "error">("idle");
+  const [progress, setProgress] = useState(0);
+  const [processed, setProcessed] = useState(0);
+  const [message, setMessage] = useState("");
   const [error, setError] = useState<{ message: string; selectionKey: string } | null>(null);
   const [generatedPatch, setGeneratedPatch] = useState<PatchResponseData | null>(null);
 
+  const eventSourceRef = useRef<EventSource | null>(null);
   const count = selectedFindings.length;
 
   // The bar stays mounted while the selection changes, so a patch (or an error)
-  // is only shown for the selection it was produced for. Without this, picking
-  // different findings after generating kept offering the old combined diff for
-  // `git apply`, and a response that landed after the selection changed was
-  // shown against the new one.
+  // is only shown for the selection it was produced for.
   const selectionKey = useMemo(
     () => selectedFindings.map((f) => f.id).join(","),
     [selectedFindings],
   );
+
+  const [prevSelectionKey, setPrevSelectionKey] = useState(selectionKey);
+
+  // Reset state when selection changes, per React documentation for prop updates.
+  if (selectionKey !== prevSelectionKey) {
+    setPrevSelectionKey(selectionKey);
+    setStatus("idle");
+    setProgress(0);
+    setProcessed(0);
+    setMessage("");
+    setError(null);
+    setGeneratedPatch(null);
+  }
+
+  // Clean up SSE when selection changes or component unmounts
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+  }, [selectionKey]);
+
   const patchData = generatedPatch?.selectionKey === selectionKey ? generatedPatch : null;
   const errorMessage = error?.selectionKey === selectionKey ? error.message : null;
 
@@ -55,7 +81,7 @@ export default function BulkRemediationBar({
     return null;
   }
 
-  const handleGeneratePatch = async () => {
+  const handleGeneratePatch = () => {
     if (!isHomogeneous) {
       toast({
         variant: "destructive",
@@ -67,53 +93,88 @@ export default function BulkRemediationBar({
     }
 
     const requestedFor = selectionKey;
-    setLoading(true);
+    setStatus("processing");
+    setProgress(0);
+    setProcessed(0);
+    setMessage("Initializing bulk patch generation...");
     setError(null);
+    setGeneratedPatch(null);
 
-    try {
-      const res = await fetch("/api/findings/bulk-remediate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          findingIds: selectedFindings.map((f) => f.id),
-        }),
-      });
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+    }
 
-      const data = await res.json();
+    // Construct SSE URL passing the selected finding IDs
+    const idsQuery = selectedFindings.map((f) => f.id).join(",");
+    const url = `/api/findings/bulk-remediate/stream?ids=${idsQuery}&total=${count}`;
 
-      if (!res.ok || !data.success) {
-        const errorMsg = data.error || "Failed to generate bulk remediation patch.";
-        setError({ message: errorMsg, selectionKey: requestedFor });
-        toast({
-          variant: "destructive",
-          title: "Remediation Failed",
-          description: errorMsg,
-        });
-        return;
+    const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        if (typeof data.processed === "number") setProcessed(data.processed);
+        if (typeof data.progress === "number") setProgress(data.progress);
+        if (data.message) setMessage(data.message);
+
+        if (data.status === "completed") {
+          setStatus("completed");
+          eventSource.close();
+          eventSourceRef.current = null;
+
+          setGeneratedPatch({
+            patchDiff: data.patchDiff || data.patch?.patchDiff,
+            explanation: data.explanation,
+            selectionKey: requestedFor,
+          });
+
+          toast({
+            variant: "success",
+            title: "Bulk Patch Generated 🛡️",
+            description: `Generated combined patch for ${count} ${commonType} findings.`,
+          });
+        } else if (data.status === "error") {
+          setStatus("error");
+          eventSource.close();
+          eventSourceRef.current = null;
+
+          const errorMsg =
+            data.error || data.message || "Failed to generate bulk remediation patch.";
+          setError({ message: errorMsg, selectionKey: requestedFor });
+
+          toast({
+            variant: "destructive",
+            title: "Remediation Failed",
+            description: errorMsg,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to parse SSE event data", err);
       }
+    };
 
-      setGeneratedPatch({
-        patchDiff: data.patch.patchDiff,
-        explanation: data.explanation,
-        selectionKey: requestedFor,
-      });
-
-      toast({
-        variant: "success",
-        title: "Bulk Patch Generated 🛡️",
-        description: `Generated combined patch for ${count} ${commonType} findings.`,
-      });
-    } catch {
-      const errorMsg = "An unexpected error occurred while generating the bulk patch.";
+    eventSource.onerror = () => {
+      setStatus("error");
+      const errorMsg = "SSE connection lost or terminated.";
+      setMessage(errorMsg);
       setError({ message: errorMsg, selectionKey: requestedFor });
+
+      eventSource.close();
+      eventSourceRef.current = null;
+
       toast({
         variant: "destructive",
         title: "Remediation Error",
         description: errorMsg,
       });
-    } finally {
-      setLoading(false);
-    }
+    };
+  };
+
+  const handleCloseDiff = () => {
+    setGeneratedPatch(null);
+    setStatus("idle");
   };
 
   return (
@@ -177,25 +238,39 @@ export default function BulkRemediationBar({
       )}
 
       {!patchData ? (
-        <Button
-          size="sm"
-          className="w-full"
-          disabled={!isHomogeneous || loading}
-          onClick={handleGeneratePatch}
-          data-testid="generate-bulk-patch-button"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              Generating Bulk Patch…
-            </>
-          ) : (
-            <>
-              <Wrench className="w-4 h-4 mr-2" />
-              Generate Bulk Remediation Patch
-            </>
-          )}
-        </Button>
+        status === "processing" ? (
+          <div className="space-y-2 pt-2">
+            <div className="flex justify-between text-xs text-muted-foreground mb-1">
+              <span>{message || "Processing..."}</span>
+              <span className="font-mono">
+                {processed} / {count} ({progress}%)
+              </span>
+            </div>
+            <div className="w-full bg-slate-800/50 h-2.5 rounded-full overflow-hidden border border-white/5">
+              <div
+                className={`h-full transition-all duration-300 ease-out ${
+                  status === "completed"
+                    ? "bg-emerald-500"
+                    : status === "error"
+                      ? "bg-red-500"
+                      : "bg-primary"
+                }`}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            className="w-full"
+            disabled={!isHomogeneous}
+            onClick={handleGeneratePatch}
+            data-testid="generate-bulk-patch-button"
+          >
+            <Wrench className="w-4 h-4 mr-2" />
+            Generate Bulk Remediation Patch
+          </Button>
+        )
       ) : (
         <div className="space-y-3 pt-2" data-testid="bulk-patch-review">
           <div className="flex items-center justify-between">
@@ -206,7 +281,7 @@ export default function BulkRemediationBar({
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs"
-              onClick={() => setGeneratedPatch(null)}
+              onClick={handleCloseDiff}
             >
               <X className="w-3 h-3 mr-1" />
               Close Diff
@@ -231,3 +306,5 @@ export default function BulkRemediationBar({
     </div>
   );
 }
+
+export default BulkRemediationBar;

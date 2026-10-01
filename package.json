@@ -19,6 +19,7 @@
     "test:coverage": "vitest run --coverage",
     "test:redteam": "vitest run src/ai/flows/heist-prompt-guard.redteam.test.ts",
     "threat-feed:sync": "tsx scripts/sync-threat-feed.ts",
+    "threat-feed:sync:render": "tsx --env-file=.env scripts/sync-threat-feed.ts",
     "test:e2e": "playwright test",
     "cli:build": "npm run build --workspace=cli",
     "cli:test": "npm run test --workspace=cli",

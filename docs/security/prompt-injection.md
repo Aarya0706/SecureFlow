@@ -194,4 +194,3 @@ To run the complete red-team suite against all payloads:
 ```bash
 npm run test:redteam
 ```
-
