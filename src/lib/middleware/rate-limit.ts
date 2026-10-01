@@ -55,12 +55,7 @@ export const TIERS = {
     fallbackStrategy: "fail-closed" as FallbackStrategy,
     timeoutMs: 1000,
   },
-  WEBHOOK: {
-    limit: 60,
-    windowSeconds: 60,
-    fallbackStrategy: "fail-closed" as FallbackStrategy,
-    timeoutMs: 1000,
-  },
+
   SCAN: {
     limit: 20,
     windowSeconds: 60,
