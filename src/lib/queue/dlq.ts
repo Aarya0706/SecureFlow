@@ -24,13 +24,13 @@ export interface DlqJobLike {
 
 export interface FailedWebhookMessage {
   id: string;
-  source: 'github' | 'generic' | 'internal';
+  source: "github" | "generic" | "internal";
   event: string;
   payload: Record<string, any>;
   error: string;
   attempts: number;
   lastFailedAt: string;
-  status: 'failed' | 'retrying' | 'replayed' | 'discarded';
+  status: "failed" | "retrying" | "replayed" | "discarded";
 }
 
 class WebhookDeadLetterQueue {
@@ -38,23 +38,27 @@ class WebhookDeadLetterQueue {
 
   constructor() {
     this.add({
-      id: 'dlq-init-001',
-      source: 'github',
-      event: 'push',
-      payload: { repository: 'Janvi-kapoor/SecureFlow', ref: 'refs/heads/main' },
-      error: 'Signature verification timeout or handler exception',
+      id: "dlq-init-001",
+      source: "github",
+      event: "push",
+      payload: { repository: "Janvi-kapoor/SecureFlow", ref: "refs/heads/main" },
+      error: "Signature verification timeout or handler exception",
       attempts: 3,
       lastFailedAt: new Date().toISOString(),
-      status: 'failed'
+      status: "failed",
     });
   }
 
-  public add(message: Omit<FailedWebhookMessage, 'attempts' | 'lastFailedAt' | 'status'> & { attempts?: number }): FailedWebhookMessage {
+  public add(
+    message: Omit<FailedWebhookMessage, "attempts" | "lastFailedAt" | "status"> & {
+      attempts?: number;
+    },
+  ): FailedWebhookMessage {
     const fullMessage: FailedWebhookMessage = {
       ...message,
       attempts: message.attempts || 1,
       lastFailedAt: new Date().toISOString(),
-      status: 'failed'
+      status: "failed",
     };
     this.queue.set(fullMessage.id, fullMessage);
     return fullMessage;
@@ -72,14 +76,14 @@ class WebhookDeadLetterQueue {
     const item = this.queue.get(id);
     if (!item) return false;
 
-    item.status = 'retrying';
+    item.status = "retrying";
     try {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      item.status = 'replayed';
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      item.status = "replayed";
       item.attempts += 1;
       return true;
     } catch (err) {
-      item.status = 'failed';
+      item.status = "failed";
       item.attempts += 1;
       item.lastFailedAt = new Date().toISOString();
       return false;
@@ -89,7 +93,7 @@ class WebhookDeadLetterQueue {
   public discard(id: string): boolean {
     const item = this.queue.get(id);
     if (!item) return false;
-    item.status = 'discarded';
+    item.status = "discarded";
     return true;
   }
 
@@ -141,8 +145,6 @@ export function requeueOptionsFor(payload: WebhookJobData | null | undefined): {
   replaceFailed?: boolean;
 } {
   const deliveryId = deliveryIdOf(payload);
-  // The failed original still holds this id in the main queue; see
-  // `AddWebhookJobOptions.replaceFailed`.
   return deliveryId ? { jobId: webhookJobId(deliveryId), replaceFailed: true } : {};
 }
 
