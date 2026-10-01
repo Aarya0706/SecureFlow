@@ -121,9 +121,32 @@ export function deliveryIdOf(payload: WebhookJobData | null | undefined): string
   return normalizeDeliveryId(payload.deliveryId);
 }
 
-export function requeueOptionsFor(payload: WebhookJobData | null | undefined): { jobId?: string } {
+/**
+ * The `addWebhookJob` options a requeue should use.
+ *
+ * This is the fix for the idempotency hole. `/api/webhooks/github` enqueues with
+ * `{ jobId: webhookJobId(deliveryId) }`, which is what stops a redelivered
+ * webhook from occupying a worker slot — BullMQ refuses a job whose id already
+ * exists (#562). The requeue paths passed no options at all, so on the one path
+ * most likely to produce a duplicate the dedupe key was absent and both copies
+ * were accepted.
+ *
+ * Deriving the same id here means "requeue" and "GitHub redelivered it" collapse
+ * to one job, exactly as they do on ingest. An entry with no recoverable
+ * delivery id still requeues, just without the guarantee — that is strictly
+ * better than refusing to requeue it, and it is the pre-existing behaviour.
+ */
+export function requeueOptionsFor(payload: WebhookJobData | null | undefined): {
+  jobId?: string;
+  replaceFailed?: boolean;
+} {
   const deliveryId = deliveryIdOf(payload);
-  return deliveryId ? { jobId: webhookJobId(deliveryId) } : {};
+  return deliveryId ? { jobId: webhookJobId(deliveryId), replaceFailed: true } : {};
+}
+  const deliveryId = deliveryIdOf(payload);
+  // The failed original still holds this id in the main queue; see
+  // `AddWebhookJobOptions.replaceFailed`.
+  return deliveryId ? { jobId: webhookJobId(deliveryId), replaceFailed: true } : {};
 }
 
 export interface DlqEntryDescriptor {
