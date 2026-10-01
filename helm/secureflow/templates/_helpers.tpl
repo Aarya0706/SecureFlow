@@ -43,7 +43,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
-Selector labels for the main app
+Selector labels for the main app — used by both the Service and the ServiceMonitor selector.
 */}}
 {{- define "secureflow.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "secureflow.name" . }}
