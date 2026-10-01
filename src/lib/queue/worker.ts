@@ -4,7 +4,7 @@ import { redis } from "./redis";
 import { webhookDLQ, WebhookJobData } from "./webhookQueue";
 import { dlqRetryStateFor } from "./dlq-auto-retry";
 import { acquireLock, releaseLock, startLockHeartbeat } from "./lock";
-import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
+import { scanner } from "@/lib/armor/scanner";
 import { processScanJob, type ScanJobResult } from "@/lib/scanner/scanEngine";
 import type { ScanJobData } from "@/lib/queue/scanQueue";
 import { maskFindingText } from "@/lib/armor/secret-masking";
@@ -709,25 +709,6 @@ export const worker = new Worker<WebhookJobData>(
               (coverageNotice ? `\n\n${coverageNotice}` : ""),
           });
 
-          let customIgnores: string[] = [];
-          let customPlaceholders: string[] = [];
-          try {
-            const { data } = await octokit.rest.repos.getContent({
-              owner: repository.owner.login,
-              repo: repository.name,
-              path: ".secureflowignore",
-              ref: pull_request.head.sha,
-            });
-            if (data && "content" in data && typeof data.content === "string") {
-              const content = Buffer.from(data.content, "base64").toString("utf8");
-              const parsed = parseSecureFlowIgnore(content);
-              customIgnores = parsed.ignoredPaths;
-              customPlaceholders = parsed.placeholders;
-            }
-          } catch (e) {
-            // Ignored if file does not exist
-          }
-
           console.log(
             `[DEBUG] Passing ${sanitize(activePolicies.length)} active policies to scanEngine.`,
           );
@@ -740,8 +721,12 @@ export const worker = new Worker<WebhookJobData>(
             headSha: pull_request.head.sha,
             fileChanges,
             activePolicies,
-            customIgnores,
-            customPlaceholders,
+            // Ignore rules are loaded by the scan engine from the base branch. They
+            // were read here from `pull_request.head.sha`, the author's own commit,
+            // which let a pull request switch off the scan of its own files.
+            baseRef: pull_request.base?.ref,
+            customIgnores: [],
+            customPlaceholders: [],
             userId,
           };
           // Scanning only. This function posts its own check run and pull request

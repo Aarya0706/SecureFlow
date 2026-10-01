@@ -30,6 +30,12 @@ export interface ScanJobData {
   prNumber: number;
   /** Head SHA for check runs. */
   headSha: string;
+  /**
+   * Branch the pull request merges into. `.secureflowignore` is read from here,
+   * never from `headSha`, which the pull request's author controls. When absent
+   * the scan engine looks it up from the pull request.
+   */
+  baseRef?: string;
   /** File changes to scan (filename + patch). */
   fileChanges: Array<{ filename: string; patch: string }>;
   /** Active policy descriptions. */

@@ -376,7 +376,10 @@ For a tracked `pull_request` event, the handler:
 1. Creates a GitHub Check Run named `SecureFlow Scan` (status: `in_progress`).
 2. Fetches the PR's changed files (capped at **150 files** — beyond that, only the first 150 are scanned and a warning is posted).
 3. Posts a `⏳ SecureFlow AI Security Scan` placeholder comment.
-4. Reads `.secureflowignore` from the repo root (if present) for custom ignore patterns.
+4. Reads `.secureflowignore` from the repo root **of the pull request's base branch** (if present) for custom ignore
+   patterns. It is deliberately not read from the pull request's own branch: the file decides which files are
+   skipped, so a change under review must not be able to switch off its own scan. Edits to `.secureflowignore`
+   take effect for pull requests opened after they are merged.
 5. Runs `scanner.scanPullRequest()` → `developerReceivesAISecurityExplanations()` per finding → `iq.evaluateFindings()` for the policy decision.
 6. Updates the Check Run conclusion: `success` (PASS), `action_required` (REVIEW REQUIRED), or `failure` (BLOCKED).
 7. Updates the placeholder comment with the full AI Security Report (or a ✅ "no vulnerabilities" message).
