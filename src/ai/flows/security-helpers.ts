@@ -83,6 +83,7 @@ function sanitizeForPrompt(input: string): string {
  * extra manual look, not a suppressed finding.
  */
 const INJECTION_PATTERNS: RegExp[] = [
+  // ── Existing patterns ────────────────────────────────────────────────────
   /ignore (all )?(previous|prior|above) instructions/i,
   /disregard (all )?(previous|prior|above)? ?instructions/i,
   /you are now/i,
@@ -99,6 +100,25 @@ const INJECTION_PATTERNS: RegExp[] = [
   /respond only with/i,
   /<\|.*?\|>/,
   /\[\[.*?(system|instruction).*?\]\]/i,
+
+  // ── Category 1: System-prompt exfiltration (#1109) ────────────────────────
+  // Attempts to make the model reveal its system prompt or developer guidelines.
+  /reveal (the |your )?(hidden |initial |full )?(system|developer|startup) (instructions?|prompt|guidelines?)/i,
+  /print (out |verbatim )?(your )?(system|developer) (prompt|instructions?)/i,
+  /output (your |the )?(full |complete )?(system prompt|initial instructions?|developer guidelines?)/i,
+  /what (does |did )?(your|the) (system prompt|initial prompt) say/i,
+  /tell me (what |about )?(your )?(system|initial|startup) (prompt|instructions?)/i,
+
+  // ── Category 2: Persona hijacking — DAN / jailbreak framing (#1109) ──────
+  // Attempts to replace the model's identity with an unconstrained persona.
+  /\bDAN\b.*?(do anything now|no restrictions|bypass)/i,
+  /do anything now/i,
+  /no (ethical |safety |moral )?constraints/i,
+  /bypass (all )?(safety|security|ethical) (rules?|protocols?|constraints?|guidelines?)/i,
+  /you (are |have )?no longer an? (AI|assistant|language model)/i,
+  /safety subroutines? (are |is )?(inactive|disabled|off)/i,
+  /operating in (safe|debug|unrestricted) mode/i,
+  /unhinged (hacker|assistant|mode)/i,
 ];
 
 function detectPromptInjection(text: string): boolean {
