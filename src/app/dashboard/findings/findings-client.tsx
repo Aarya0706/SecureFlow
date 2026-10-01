@@ -159,7 +159,6 @@ export default function FindingsClient({
         <StatBox icon={<Terminal />} value={stats.other} label="Other" color="slate" />
       </div>
 
-      {/* [NEW] SBOM Report Section - Rendered if data exists */}
       {sbomReport && (
         <div className="space-y-4">
           <h2 className="text-xl font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
@@ -169,9 +168,6 @@ export default function FindingsClient({
           <SbomReportCard result={sbomReport} />
         </div>
       )}
-      <div className="mb-6">
-        <BulkRemediationBar totalFindings={total || 50} />
-      </div>
 
       <FindingsToolbar
         options={filterOptions}

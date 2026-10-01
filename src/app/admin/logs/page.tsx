@@ -52,9 +52,6 @@ export default async function AdminLogsPage({
       <LogsTable
         logs={result.logs}
         actions={filters.actions}
-        total={result.total}
-        page={currentPage}
-        pageSize={INITIAL_PAGE_SIZE}
       />
 
       {result.total > INITIAL_PAGE_SIZE && (

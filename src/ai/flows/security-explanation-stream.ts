@@ -36,16 +36,12 @@ export interface StreamOptions {
   onUsage?: (usage: TokenUsage) => void;
 }
 
-/**
- * Aggregates token usage metrics across multiple streaming generations or batches.
- * Sums input, output, and total tokens.
- */
 export function aggregateTokenUsage(usages: Array<TokenUsage | null | undefined>): {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
 } {
-  return usages.reduce(
+  return usages.reduce<{ inputTokens: number; outputTokens: number; totalTokens: number }>(
     (acc, usage) => {
       const input = usage?.inputTokens ?? 0;
       const output = usage?.outputTokens ?? 0;

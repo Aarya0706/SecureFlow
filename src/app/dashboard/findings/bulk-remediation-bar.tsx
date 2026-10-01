@@ -248,13 +248,7 @@ export function BulkRemediationBar({
             </div>
             <div className="w-full bg-slate-800/50 h-2.5 rounded-full overflow-hidden border border-white/5">
               <div
-                className={`h-full transition-all duration-300 ease-out ${
-                  status === "completed"
-                    ? "bg-emerald-500"
-                    : status === "error"
-                      ? "bg-red-500"
-                      : "bg-primary"
-                }`}
+                className="h-full transition-all duration-300 ease-out bg-primary"
                 style={{ width: `${progress}%` }}
               />
             </div>
