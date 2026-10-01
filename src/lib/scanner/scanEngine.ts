@@ -9,7 +9,7 @@
  *   const result = await processScanJob(jobData, onProgress);
  */
 
-import { scanner, parseSecureFlowIgnore } from "@/lib/armor/scanner";
+import { scanner } from "@/lib/armor/scanner";
 import { iq } from "@/lib/armor/iq";
 import { computeFingerprint } from "@/lib/armor/fingerprint";
 import { developerReceivesAISecurityExplanations } from "@/ai/flows/developer-receives-ai-security-explanations";
@@ -33,6 +33,7 @@ import {
   type EnrichedScanFinding,
 } from "./scan-persistence";
 import { resolvePullRequestRecord, splitRepositoryFullName } from "./pull-request-record";
+import { loadTrustedIgnoreConfig, type IgnoreConfigClient } from "./ignore-config";
 import { notifyHighSeverityFindings } from "@/lib/integrations/slack";
 
 /** Maximum files to process in a single batch before yielding. */
@@ -155,6 +156,7 @@ export async function processScanJob(
     repositoryFullName,
     prNumber,
     headSha,
+    baseRef,
     fileChanges: initialFileChanges,
     activePolicies,
     customIgnores: initialCustomIgnores,
@@ -179,30 +181,42 @@ export async function processScanJob(
   // the route accepts either and BullMQ round-trips job data through JSON.
   const octokit = await appClient.getInstallationOctokit(parseInstallationId(installationId));
 
-  let customIgnores = initialCustomIgnores ?? [];
-  let customPlaceholders = initialCustomPlaceholders ?? [];
-
-  // If not provided (e.g. from /api/findings where client ignores are stripped),
-  // load legitimate repository-level ignores from .secureflowignore at headSha (#2)
-  if (customIgnores.length === 0 && customPlaceholders.length === 0) {
-    try {
-      const { owner, repo } = splitRepositoryFullName(repositoryFullName);
-      const { data: ignoreFile } = await (octokit as any).rest.repos.getContent({
-        owner,
-        repo,
-        path: ".secureflowignore",
-        ref: headSha,
-      });
-      if (ignoreFile && "content" in ignoreFile && typeof ignoreFile.content === "string") {
-        const content = Buffer.from(ignoreFile.content, "base64").toString("utf8");
-        const parsed = parseSecureFlowIgnore(content);
-        customIgnores = parsed.ignoredPaths;
-        customPlaceholders = parsed.placeholders;
-      }
-    } catch {
-      // .secureflowignore is optional; continue if not found
-    }
+  // Ignore rules decide what the scan does not read, so they are taken from the
+  // pull request's base branch and never from its head: the head is the author's
+  // own branch, and a pull request that adds a `.secureflowignore` containing
+  // `**` would otherwise skip every file in it. See `./ignore-config`.
+  //
+  // `initialCustomIgnores` / `initialCustomPlaceholders` are server-supplied
+  // (never request fields) and are kept as an addition to the repository's own.
+  let repositoryIgnoreConfig: { ignoredPaths: string[]; placeholders: string[] } = {
+    ignoredPaths: [],
+    placeholders: [],
+  };
+  try {
+    const { owner, repo } = splitRepositoryFullName(repositoryFullName);
+    const client = octokit as unknown as IgnoreConfigClient;
+    repositoryIgnoreConfig = await loadTrustedIgnoreConfig(client, {
+      owner,
+      repo,
+      prNumber,
+      baseRef,
+    });
+  } catch (err) {
+    // Scanning without ignore rules is the safe direction: it can only cover more.
+    console.warn(
+      `[ScanEngine] Could not load ignore configuration for ${repositoryFullName}:`,
+      err,
+    );
   }
+
+  const customIgnores = [
+    ...(initialCustomIgnores ?? []),
+    ...repositoryIgnoreConfig.ignoredPaths,
+  ];
+  const customPlaceholders = [
+    ...(initialCustomPlaceholders ?? []),
+    ...repositoryIgnoreConfig.placeholders,
+  ];
 
   // If no file changes provided, fetch from GitHub
   let fileChanges = initialFileChanges;
