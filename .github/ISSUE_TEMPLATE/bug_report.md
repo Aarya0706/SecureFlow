@@ -40,3 +40,15 @@ and other sensitive data before posting.
 
 ```text
 
+```
+
+## Environment
+
+- SecureFlow version/commit: <!-- e.g., v1.2.3 or commit hash -->
+- Deployment method: <!-- local / docker / cloud / other -->
+- Node version:
+- OS:
+
+## Additional context
+
+<!-- Anything else that might help us debug. -->

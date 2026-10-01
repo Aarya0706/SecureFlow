@@ -1,21 +1,42 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, beforeAll } from "vitest";
 
-vi.mock("genkit", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("genkit")>();
+const { getCachedGenkit, setCachedGenkit } = vi.hoisted(() => {
+  let cached: any = null;
   return {
-    ...actual,
+    getCachedGenkit: () => cached,
+    setCachedGenkit: (val: any) => {
+      cached = val;
+    },
+  };
+});
+
+// We use `importOriginal` to retain all the real schemas (like `GenerationCommonConfigSchema`)
+// that plugins like `genkitx-groq` rely on. To avoid Vitest's known deadlock when
+// `importOriginal` is called after `vi.resetModules()`, we cache the real module
+// and reuse it on subsequent evaluations.
+vi.mock("genkit", async (importOriginal) => {
+  let cached = getCachedGenkit();
+  if (!cached) {
+    cached = await importOriginal<typeof import("genkit")>();
+    setCachedGenkit(cached);
+  }
+  return {
+    ...cached,
     genkit: vi.fn(() => ({})),
   };
 });
+
 vi.mock("genkitx-groq", () => ({
   groq: vi.fn(() => ({})),
   gptOssx20b: { name: "groq/openai/gpt-oss-20b" },
 }));
+
 vi.mock("@/lib/prisma", () => ({
   default: {
     user: { findUnique: vi.fn() },
   },
 }));
+
 vi.mock("@/lib/queue/redis", () => ({
   redis: { get: vi.fn(), set: vi.fn(), on: vi.fn(), status: "ready" },
 }));
@@ -45,6 +66,12 @@ async function loadGenkit() {
 }
 
 describe("security explanation fallback chain", () => {
+  beforeAll(async () => {
+    // Pre-load the module before any vi.resetModules() calls to populate the
+    // hoisted cache, avoiding the Vitest importOriginal + resetModules deadlock.
+    await import("genkit");
+  });
+
   // Shut down by Groq (https://console.groq.com/docs/deprecations).
   const SHUT_DOWN = [
     "groq/llama-3.3-70b-versatile",
