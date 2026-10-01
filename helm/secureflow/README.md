@@ -148,13 +148,21 @@ helm upgrade --install secureflow ./helm/secureflow -f production-values.yaml
 | `app.autoscaling.enabled`    | Enable HorizontalPodAutoscaler for app          | `false`          |
 | `app.podDisruptionBudget.enabled`    | Enable PodDisruptionBudget for app              | `true`           |
 | `app.podDisruptionBudget.minAvailable` | Minimum available app replicas during voluntary disruptions | `1` |
+| `app.resources.requests`     | Enforced CPU and memory requests for app container | `cpu: 250m, memory: 512Mi` |
+| `app.resources.limits`       | Enforced CPU and memory limits for app container   | `cpu: 1000m, memory: 1024Mi` |
 | `worker.enabled`             | Enable background queue workers                 | `true`           |
 | `worker.replicaCount`        | Number of worker replicas                       | `2`              |
 | `worker.concurrency`         | Scan concurrency per worker                     | `5`              |
+| `worker.resources.requests`  | Enforced CPU and memory requests for worker container (OOM protection during heavy AST/SBOM scans) | `cpu: 500m, memory: 1024Mi` |
+| `worker.resources.limits`    | Enforced CPU and memory limits for worker container | `cpu: 2000m, memory: 2048Mi` |
 | `worker.autoscaling.enabled` | Enable HorizontalPodAutoscaler for workers      | `false`          |
 | `worker.podDisruptionBudget.enabled` | Enable PodDisruptionBudget for workers          | `true`           |
 | `worker.podDisruptionBudget.minAvailable` | Minimum available worker replicas during voluntary disruptions | `1` |
 | `worker.affinity`            | Node affinity and pod anti-affinity rules for workers | *(preconfigured for worker/compute nodes)* |
+| `resourceQuota.enabled`      | Enable Kubernetes namespace ResourceQuota budget | `true`           |
+| `resourceQuota.hard`         | Hard compute and object limits for the namespace | *(4 CPU / 8Gi req, 8 CPU / 16Gi limit)* |
+| `limitRange.enabled`         | Enable Kubernetes LimitRange for default container bounds | `true`           |
+| `limitRange.limits`          | Default requests, default limits, min and max bounds for containers | *(preconfigured defaults)* |
 | `migration.enabled`          | Enable automated database schema migration hook | `true`           |
 | `retention.enabled`          | Enable scheduled data retention cleanup CronJob | `true`           |
 | `retention.schedule`         | Cron schedule for data retention                | `0 2 * * *`      |

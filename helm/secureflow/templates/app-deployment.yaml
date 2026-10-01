@@ -60,7 +60,16 @@ spec:
             {{- toYaml . | nindent 12 }}
           {{- end }}
           resources:
+            {{- if .Values.app.resources }}
             {{- toYaml .Values.app.resources | nindent 12 }}
+            {{- else }}
+            limits:
+              cpu: 1000m
+              memory: 1024Mi
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            {{- end }}
       {{- with .Values.app.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
