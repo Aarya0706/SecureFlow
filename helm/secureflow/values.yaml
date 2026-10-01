@@ -1,0 +1,76 @@
+# Default values for secureflow Helm chart.
+# Override these in your own values file or with --set flags.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/gauravkarakoti/secureflow
+  pullPolicy: IfNotPresent
+  # Overrides the image tag. Defaults to the chart appVersion.
+  tag: ""
+
+service:
+  type: ClusterIP
+  port: 9002
+  # Named port used by the ServiceMonitor to locate the metrics endpoint.
+  # Must match the port name in the Service spec below.
+  portName: http
+
+# ---------------------------------------------------------------------------
+# Prometheus ServiceMonitor (#1143)
+#
+# Enables automatic scraping of /api/metrics/landing by a Prometheus Operator
+# ServiceMonitor CRD. Set serviceMonitor.enabled=true when your cluster has
+# the Prometheus Operator (kube-prometheus-stack) installed.
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  # Set to true to deploy the ServiceMonitor CRD.
+  enabled: false
+
+  # Namespace to deploy the ServiceMonitor into.
+  # Defaults to the release namespace when empty.
+  namespace: ""
+
+  # How often Prometheus scrapes the metrics endpoint.
+  interval: 30s
+
+  # Scrape timeout — must be <= interval.
+  scrapeTimeout: 10s
+
+  # Path Prometheus scrapes. Matches the existing /api/metrics/landing route.
+  path: /api/metrics/landing
+
+  # Additional labels added to the ServiceMonitor.
+  # Use these to match your Prometheus Operator's serviceMonitorSelector.
+  # Example:
+  #   additionalLabels:
+  #     release: kube-prometheus-stack
+  additionalLabels: {}
+
+  # Relabeling rules applied to scraped metrics before ingestion.
+  relabelings: []
+
+  # Metric relabeling rules applied after scraping.
+  metricRelabelings: []
+
+  # TLS configuration for scraping (leave empty for plain HTTP).
+  tlsConfig: {}
+
+  # Bearer token secret reference for authenticated scraping.
+  # bearerTokenSecret:
+  #   name: secureflow-metrics-token
+  #   key: token
+  bearerTokenSecret: {}
+
+resources: {}
+  # Recommended production values:
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 250m
+  #   memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

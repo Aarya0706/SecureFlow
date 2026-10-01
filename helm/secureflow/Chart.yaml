@@ -1,0 +1,17 @@
+apiVersion: v2
+name: secureflow
+description: SecureFlow — AI-powered security scanning platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - security
+  - scanning
+  - ai
+  - devsecops
+home: https://github.com/GauravKarakoti/SecureFlow
+sources:
+  - https://github.com/GauravKarakoti/SecureFlow
+maintainers:
+  - name: GauravKarakoti
+    url: https://github.com/GauravKarakoti
