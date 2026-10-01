@@ -1,17 +1,21 @@
 apiVersion: v2
 name: secureflow
-description: SecureFlow — AI-powered security scanning platform
+description: Enterprise Helm chart for SecureFlow - Next.js App, BullMQ Workers, and PostgreSQL/Redis dependencies.
 type: application
 version: 0.1.0
-appVersion: "1.0.0"
+appVersion: "0.1.0"
 keywords:
   - security
+  - secret-detection
+  - vulnerability-scanner
+  - devsecops
+  - nextjs
+  - bullmq
   - scanning
   - ai
-  - devsecops
 home: https://github.com/GauravKarakoti/SecureFlow
 sources:
   - https://github.com/GauravKarakoti/SecureFlow
 maintainers:
-  - name: GauravKarakoti
+  - name: Gaurav Karakoti
     url: https://github.com/GauravKarakoti
