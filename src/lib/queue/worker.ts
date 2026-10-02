@@ -37,8 +37,8 @@ import {
   normalizePrStatusEnum,
 } from "@/lib/finding-taxonomy";
 import { sanitizeLogValue } from "@/lib/logger";
+import { getActivePoliciesForUser } from "@/lib/policies/policy-cache";
 import { notifyHighSeverityFindings } from "@/lib/integrations/slack";
-import { loadActivePoliciesForUser } from "@/lib/findings/scan-authorization";
 import { mapWithConcurrency } from "@/lib/utils/concurrency";
 
 // Sanitize user-controlled strings before logging to prevent log injection
@@ -647,9 +647,11 @@ export const worker = new Worker<WebhookJobData>(
 
           const userId = dbRepo?.userId;
 
+          // Use Redis-cached policy list to avoid two Prisma queries per scan.
+          // Falls back to Prisma transparently when Redis is unavailable.
           let activePolicies: any[] = [];
           if (userId) {
-            activePolicies = await loadActivePoliciesForUser(prisma as any, userId);
+            activePolicies = await getActivePoliciesForUser(userId);
           }
 
           if (userId) {
