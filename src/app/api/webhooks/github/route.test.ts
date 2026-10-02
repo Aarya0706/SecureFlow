@@ -387,8 +387,20 @@ describe("GitHub webhook route", () => {
 
       expect(addWebhookJob).toHaveBeenCalledWith(
         expect.objectContaining({ deliveryId: "delivery-xyz", event: "pull_request" }),
-        { jobId: "delivery-delivery-xyz" },
+        { jobId: "delivery-delivery-xyz", replaceFailed: true },
       );
+    });
+
+    it("lets a redelivery replace a failed job for the same delivery instead of being deduped away", async () => {
+      // GitHub's "Redeliver" reuses the delivery id. The failed job from the first
+      // attempt still owns `delivery-<id>`, so without `replaceFailed` BullMQ would
+      // hand that dead job back, the route would answer 202, and nothing would run.
+      const req = makeRequest(minimalPRPayload, { "x-github-delivery": "delivery-retry-1" });
+      const res = await POST(req);
+
+      expect(res.status).toBe(202);
+      const [, options] = vi.mocked(addWebhookJob).mock.calls[0];
+      expect(options).toMatchObject({ jobId: "delivery-delivery-retry-1", replaceFailed: true });
     });
   });
 
@@ -559,7 +571,7 @@ describe("GitHub webhook route", () => {
       await POST(req);
       expect(addWebhookJob).toHaveBeenCalledWith(
         expect.objectContaining({ deliveryId, event: "pull_request" }),
-        expect.objectContaining({ jobId: `delivery-${deliveryId}` }),
+        expect.objectContaining({ jobId: `delivery-${deliveryId}`, replaceFailed: true }),
       );
     });
 
@@ -576,9 +588,11 @@ describe("GitHub webhook route", () => {
       expect(addWebhookJob).toHaveBeenCalledTimes(2);
       expect(addWebhookJob).toHaveBeenNthCalledWith(1, expect.objectContaining({ deliveryId }), {
         jobId: `delivery-${deliveryId}`,
+        replaceFailed: true,
       });
       expect(addWebhookJob).toHaveBeenNthCalledWith(2, expect.objectContaining({ deliveryId }), {
         jobId: `delivery-${deliveryId}`,
+        replaceFailed: true,
       });
     });
   });
