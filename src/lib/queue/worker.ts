@@ -26,6 +26,7 @@ import {
   normalizePrStatusEnum,
 } from "@/lib/finding-taxonomy";
 import { sanitizeLogValue } from "@/lib/logger";
+import { getActivePoliciesForUser } from "@/lib/policies/policy-cache";
 
 // Sanitize user-controlled strings before logging to prevent log injection
 // (CWE-117). The implementation moved to src/lib/logger.ts so every module gets
@@ -554,18 +555,11 @@ export const worker = new Worker<WebhookJobData>(
 
         const userId = dbRepo?.userId;
 
+        // Use Redis-cached policy list to avoid two Prisma queries per scan.
+        // Falls back to Prisma transparently when Redis is unavailable.
         let activePolicies: any[] = [];
         if (userId) {
-          const templates = await prisma.policyTemplate.findMany();
-          const userToggles = await prisma.userPolicyToggle.findMany({
-            where: { userId },
-          });
-
-          const toggleMap = new Map(userToggles.map((t: any) => [t.policyTemplateId, t.isActive]));
-
-          activePolicies = templates.filter((template: any) => {
-            return toggleMap.has(template.id) ? toggleMap.get(template.id) : template.isDefault;
-          });
+          activePolicies = await getActivePoliciesForUser(userId);
         }
 
         if (userId) {
