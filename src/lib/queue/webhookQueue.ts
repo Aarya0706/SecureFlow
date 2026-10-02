@@ -16,6 +16,24 @@ export interface WebhookJobData {
   dlqAutoRetryCount?: number;
 }
 
+/**
+ * How long BullMQ keeps a finished job, in seconds.
+ *
+ * This was unset, which BullMQ reads as "forever", and it is the only queue here
+ * that was left that way (`scanQueue` and `sbomQueue` both set these). Every
+ * delivery's job carries its full webhook payload, so Redis grew by one payload
+ * per webhook for as long as the deployment lived.
+ *
+ * Neither window is the idempotency guarantee. A *completed* delivery is
+ * recorded in the `WebhookEvent` table, which the worker checks before doing
+ * anything, so a replay after its job has expired is discarded there. A *failed*
+ * delivery has no such record, and its dead job holds the job ID until it is
+ * either replaced (`replaceFailed`) or expires here; the DLQ keeps its own copy
+ * of the payload for as long as an operator needs it.
+ */
+export const WEBHOOK_JOB_COMPLETED_RETENTION_SECONDS = 86_400; // 24 hours
+export const WEBHOOK_JOB_FAILED_RETENTION_SECONDS = 172_800; // 48 hours
+
 export const webhookQueue = new Queue<WebhookJobData>("github-webhooks", {
   connection: redis as any,
   defaultJobOptions: {
@@ -24,6 +42,8 @@ export const webhookQueue = new Queue<WebhookJobData>("github-webhooks", {
       type: "exponential",
       delay: 5000,
     },
+    removeOnComplete: { age: WEBHOOK_JOB_COMPLETED_RETENTION_SECONDS },
+    removeOnFail: { age: WEBHOOK_JOB_FAILED_RETENTION_SECONDS },
   },
 });
 
@@ -44,12 +64,18 @@ export interface AddWebhookJobOptions {
   jobId?: string;
   /**
    * Replace a *failed* job that already holds `jobId`, instead of deduping
-   * against it. Set by the DLQ requeue paths.
+   * against it. Set by the DLQ requeue paths and by the webhook ingest route.
    *
    * The main queue keeps failed jobs, so a delivery that exhausted its attempts
-   * still owns `delivery-<id>` when its DLQ entry is requeued. BullMQ treats
-   * the requeue as a duplicate of that dead job and returns it without adding
-   * anything: the DLQ entry is already gone and the webhook never runs again.
+   * still owns `delivery-<id>`. BullMQ treats any later attempt to enqueue that
+   * delivery as a duplicate of the dead job and returns it without adding
+   * anything. For a DLQ requeue that means the entry is already gone and the
+   * webhook never runs again. For ingest it means GitHub's "Redeliver" button,
+   * which reuses the original delivery ID, is answered `202 queued` and does
+   * nothing — and since the ingest route answers before the job runs, GitHub
+   * never lists such a delivery as failed in the first place, so redelivering by
+   * hand is the only remedy an operator has.
+   *
    * A job in any other state is a live or finished copy, and deduping against
    * it is still correct.
    */

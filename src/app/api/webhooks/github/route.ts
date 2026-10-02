@@ -165,13 +165,20 @@ const handler = withErrorHandler(async function POST(req: NextRequest) {
   //
   // All Zod validation, Prisma idempotency checks and DB relations live in the
   // worker that processes this job.
+  //
+  // `replaceFailed`: a delivery whose job exhausted its attempts keeps its job ID
+  // in the queue, so without this a redelivery of that same delivery (GitHub's
+  // "Redeliver" button reuses the delivery ID) is deduped against the dead job,
+  // answered 202, and never runs. Only a *failed* job is replaced; a waiting,
+  // active or completed one still collapses the replay. The request is already
+  // signature-verified, so only GitHub can cause this.
   await addWebhookJob(
     {
       payload: parsed.payload,
       deliveryId,
       event,
     },
-    { jobId: webhookJobId(deliveryId) },
+    { jobId: webhookJobId(deliveryId), replaceFailed: true },
   );
 
   return NextResponse.json({ status: "queued", deliveryId }, { status: 202 });
